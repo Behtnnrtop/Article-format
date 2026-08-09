@@ -38,7 +38,8 @@ body{
 
 #header{
     display:inline-flex;
-    max-width:calc(100% - 70px);
+    max-width:calc(100% - 70px - var(--text-side-spacing,0px) - var(--text-side-spacing,0px));
+    margin-left:var(--text-side-spacing,0px);
 }
 
 #year{
@@ -56,7 +57,7 @@ body{
 
 #subtitle{
     margin-top:12px;
-    margin-left:18px;
+    margin-left:calc(18px + var(--text-side-spacing,0px));
     font-size:14px;
     letter-spacing:.55em;
     color:var(--text-color,#3b3b3b);
@@ -68,7 +69,7 @@ body{
 #poster.subtitleVerticalLeft #subtitle{
     position:absolute;
     top:var(--subtitle-vertical-top,40px);
-    right:var(--subtitle-vertical-right,86px);
+    right:calc(var(--subtitle-vertical-right,86px) + var(--text-side-spacing,0px));
     writing-mode:vertical-rl;
     text-orientation:mixed;
 }
@@ -76,7 +77,7 @@ body{
 #side{
     position:absolute;
     top:40px;
-    right:50px;
+    right:calc(50px + var(--text-side-spacing,0px));
     writing-mode:vertical-rl;
     font-size:48px;
     font-weight:bold;
@@ -122,7 +123,7 @@ body{
 }
 
 #poster.hideSideHeader #header{
-    max-width:100%;
+    max-width:calc(100% - var(--text-side-spacing,0px) - var(--text-side-spacing,0px));
 }
 
 #poster.hideSideHeader #cards{
@@ -159,7 +160,7 @@ body{
 
 .cardTitle{
     display:block;
-    margin:0 0 calc(12px + var(--card-title-spacing,0px));
+    margin:0 var(--text-side-spacing,0px) calc(12px + var(--card-title-spacing,0px));
     color:var(--text-color,#111111);
     font-family:"Songti SC","STSong","SimSun",serif;
     font-size:48px;
@@ -195,7 +196,7 @@ body{
 
 .info{
     display:block;
-    margin:0;
+    margin:0 var(--text-side-spacing,0px);
     padding:0;
     line-height:var(--content-line-height,1.8);
     white-space:pre-wrap;

@@ -3,7 +3,7 @@
 =========================== */
 
 const STORAGE_KEY = "article-summary-state";
-const STATE_SCHEMA_VERSION = 8;
+const STATE_SCHEMA_VERSION = 9;
 
 let globalFont = {
     year: 78,  // 标题
@@ -16,6 +16,7 @@ let textColor = "#111111";
 let fontFamily = '"Microsoft YaHei",sans-serif';
 let lineSpacing = 1.8;
 let paragraphSpacing = 0;
+let sideSpacing = 0;
 let paragraphTitleSpacing = 0;
 let moduleSpacing = 58;
 let topPadding = 58;
@@ -95,6 +96,7 @@ const presetColors = [
 const customColorPicker = document.getElementById("customColorPicker");
 const textColorPicker = document.getElementById("textColorPicker");
 const subtitleInput = document.getElementById("subtitleInput");
+const sideSpacingInput = document.getElementById("sideSpacingInput");
 const paragraphTitleSpacingInput = document.getElementById("paragraphTitleSpacingInput");
 const moduleSpacingInput = document.getElementById("moduleSpacingInput");
 const topPaddingInput = document.getElementById("topPaddingInput");
@@ -111,7 +113,7 @@ let data = [
         title: "一月",
         text: "Loading...",
         titleSize: 70,  // 段落标题
-        textSize: 48,   //段落内容
+        textSize: 48,   // 段落内容
         lineSpacing: 1.8,
         paragraphSpacing: 0
     },
@@ -166,6 +168,12 @@ function loadState() {
 
         if (typeof state.paragraphSpacing === "number") {
             paragraphSpacing = state.paragraphSpacing;
+        }
+
+        if (typeof state.sideSpacing === "number") {
+            sideSpacing = state.sideSpacing;
+        } else if (Array.isArray(state.data) && typeof state.data[0]?.sideSpacing === "number") {
+            sideSpacing = state.data[0].sideSpacing;
         }
 
         if (typeof state.paragraphTitleSpacing === "number") {
@@ -395,6 +403,7 @@ function saveState() {
                 textColor,
                 lineSpacing,
                 paragraphSpacing,
+                sideSpacing,
                 paragraphTitleSpacing,
                 moduleSpacing,
                 topPadding,
@@ -534,6 +543,7 @@ function renderPreview() {
         poster.style.backgroundColor = backgroundColor;
         poster.style.fontFamily = fontFamily;
         poster.style.setProperty("--text-color", textColor);
+        poster.style.setProperty("--text-side-spacing", `${sideSpacing}px`);
         poster.style.setProperty("--card-title-spacing", `${paragraphTitleSpacing}px`);
         poster.style.setProperty("--module-spacing", `${moduleSpacing}px`);
         poster.classList.toggle("noTimeline", !showTimeline);
@@ -592,6 +602,10 @@ function renderPreview() {
         if (subtitleEl && subtitleInput.value !== subtitleEl.innerText) {
             subtitleInput.value = subtitleEl.innerText;
         }
+    }
+
+    if (sideSpacingInput && Number(sideSpacingInput.value) !== sideSpacing) {
+        sideSpacingInput.value = String(sideSpacing);
     }
 
     if (paragraphTitleSpacingInput && Number(paragraphTitleSpacingInput.value) !== paragraphTitleSpacing) {
@@ -1042,6 +1056,14 @@ function changeParagraphSpacing(index, value) {
     renderPreview();
 }
 
+function changeSideSpacing(value) {
+    const nextValue = Number(value);
+    if (Number.isNaN(nextValue)) return;
+
+    sideSpacing = Math.min(Math.max(nextValue, -120), 240);
+    renderPreview();
+}
+
 function changeParagraphTitleSpacing(value) {
     const nextValue = Number(value);
     if (Number.isNaN(nextValue)) return;
@@ -1237,6 +1259,12 @@ if (paragraphTitleSpacingInput) {
     };
 }
 
+if (sideSpacingInput) {
+    sideSpacingInput.oninput = function () {
+        changeSideSpacing(this.value);
+    };
+}
+
 if (moduleSpacingInput) {
     moduleSpacingInput.oninput = function () {
         changeModuleSpacing(this.value);
@@ -1318,51 +1346,78 @@ function fixSideHeaderForExport(clonedDoc) {
     const side = clonedDoc.getElementById("side");
     const clonedPoster = clonedDoc.getElementById("poster");
     if (side && !clonedPoster?.classList.contains("hideSideHeader")) {
-        const sourceSide = document.getElementById("side");
-        const sourcePoster = document.getElementById("poster");
-
-        if (!sourceSide || !sourcePoster) return;
-
-        const sourceStyle = window.getComputedStyle(sourceSide);
-        const sourceRect = sourceSide.getBoundingClientRect();
-        const posterRect = sourcePoster.getBoundingClientRect();
-        const text = sourceSide.innerText || "";
-        const lines = text.split("\n");
-        const rotatedVerticalMarks = new Set(Array.from("【】（）()《》〈〉「」『』[]［］{}｛｝〔〕"));
-        const shouldRotateVerticalChar = (char) =>
-            rotatedVerticalMarks.has(char) || /^[A-Za-z0-9!-~]$/.test(char);
-
-        side.innerHTML = lines
-            .map((line) => {
-                const chars = Array.from(line || " ");
-                return `<span style="display:flex;flex-direction:column;align-items:center;">${chars
-                    .map((char) => {
-                        const rotateStyle = shouldRotateVerticalChar(char)
-                            ? "display:inline-block;transform:rotate(90deg);transform-origin:center center;"
-                            : "";
-                        return `<span style="${rotateStyle}">${escapeHtml(char)}</span>`;
-                    })
-                    .join("")}</span>`;
-            })
-            .join("");
-
-        side.style.position = "absolute";
-        side.style.top = `${sourceRect.top - posterRect.top}px`;
-        side.style.left = `${sourceRect.left - posterRect.left}px`;
-        side.style.right = "auto";
-        side.style.width = `${sourceRect.width}px`;
-        side.style.height = `${sourceRect.height}px`;
-        side.style.display = "flex";
-        side.style.flexDirection = "row-reverse";
-        side.style.alignItems = "flex-start";
-        side.style.justifyContent = "flex-start";
-        side.style.gap = sourceStyle.letterSpacing || "0";
-        side.style.writingMode = "horizontal-tb";
-        side.style.textOrientation = "mixed";
-        side.style.whiteSpace = "normal";
-        side.style.lineHeight = "1";
-        side.style.transform = "none";
+        side.style.visibility = "hidden";
     }
+}
+
+function shouldRotateVerticalChar(char) {
+    const rotatedVerticalMarks = new Set(Array.from("【】（）()《》〈〉「」『』[]［］{}｛｝〔〕"));
+    return rotatedVerticalMarks.has(char) || /^[A-Za-z0-9!-~]$/.test(char);
+}
+
+function getCanvasFont(style, scale) {
+    const fontStyle = style.fontStyle || "normal";
+    const fontVariant = style.fontVariant || "normal";
+    const fontWeight = style.fontWeight || "normal";
+    const fontSize = parseFloat(style.fontSize || "48") * scale;
+    const fontFamily = style.fontFamily || '"Microsoft YaHei",sans-serif';
+
+    return {
+        value: `${fontStyle} ${fontVariant} ${fontWeight} ${fontSize}px ${fontFamily}`,
+        size: fontSize
+    };
+}
+
+function drawExportSideHeader(canvas) {
+    if (!showSideHeader) return;
+
+    const side = document.getElementById("side");
+    const poster = document.getElementById("poster");
+    if (!side || !poster || window.getComputedStyle(side).display === "none") return;
+
+    const ctx = canvas.getContext("2d");
+    const scale = canvas.width / (poster.offsetWidth || canvas.width);
+    const sideStyle = window.getComputedStyle(side);
+    const sideRect = side.getBoundingClientRect();
+    const posterRect = poster.getBoundingClientRect();
+    const font = getCanvasFont(sideStyle, scale);
+    const lineHeightValue = parseFloat(sideStyle.lineHeight || "");
+    const lineHeight = Number.isFinite(lineHeightValue) ? lineHeightValue * scale : font.size * 1.2;
+    const letterSpacingValue = parseFloat(sideStyle.letterSpacing || "");
+    const letterSpacing = Number.isFinite(letterSpacingValue) ? letterSpacingValue * scale : 0;
+    const columnGap = Math.max(font.size * 0.16, letterSpacing);
+    const left = (sideRect.left - posterRect.left) * scale;
+    const top = (sideRect.top - posterRect.top) * scale;
+    const width = sideRect.width * scale;
+    const text = side.innerText || "";
+    const lines = text.split("\n");
+
+    ctx.save();
+    ctx.font = font.value;
+    ctx.fillStyle = sideStyle.color || textColor;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    lines.forEach((line, lineIndex) => {
+        const chars = Array.from(line || " ");
+        const x = left + width - font.size / 2 - lineIndex * (font.size + columnGap);
+
+        chars.forEach((char, charIndex) => {
+            const y = top + font.size / 2 + charIndex * lineHeight;
+
+            if (shouldRotateVerticalChar(char)) {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(Math.PI / 2);
+                ctx.fillText(char, 0, 0);
+                ctx.restore();
+            } else {
+                ctx.fillText(char, x, y);
+            }
+        });
+    });
+
+    ctx.restore();
 }
 
 function fixSubtitleForExport(clonedDoc) {
@@ -1399,6 +1454,9 @@ function capturePosterCanvas({ hideCopyright = false } = {}) {
                 }
             }
         }
+    }).then((canvas) => {
+        drawExportSideHeader(canvas);
+        return canvas;
     }).finally(() => {
         restorePosterAfterExport(exportState);
     });
@@ -1618,13 +1676,14 @@ function getTimelineCardSliceBounds(sourceCanvas) {
         .filter(Boolean);
 }
 
-async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, topPaddingHeight, watermarkBandHeight, watermarkSettings) {
-    const outputHeight = topPaddingHeight + sourceHeight + watermarkBandHeight;
+async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, topPaddingHeight, watermarkBandHeight, watermarkSettings, outputHeight = null) {
+    const sliceOutputHeight = outputHeight ?? topPaddingHeight + sourceHeight + watermarkBandHeight;
+    const watermarkTop = sliceOutputHeight - watermarkBandHeight;
     const sliceCanvas = document.createElement("canvas");
     const ctx = sliceCanvas.getContext("2d");
 
     sliceCanvas.width = sourceCanvas.width;
-    sliceCanvas.height = outputHeight;
+    sliceCanvas.height = sliceOutputHeight;
     ctx.fillStyle = watermarkSettings.background;
     ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
     ctx.drawImage(
@@ -1642,7 +1701,7 @@ async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, to
         ctx,
         watermarkSettings,
         sliceCanvas.width,
-        topPaddingHeight + sourceHeight,
+        watermarkTop,
         watermarkBandHeight
     );
 
@@ -1685,48 +1744,29 @@ async function exportSlicedImagesZip() {
 
         let sourceY = 0;
         let index = 1;
+        const protectedRanges = getProtectedTextRanges(sourceCanvas);
 
-        if (showTimeline) {
-            const cardBounds = getTimelineCardSliceBounds(sourceCanvas);
+        while (sourceY < sourceCanvas.height) {
+            const remainingHeight = sourceCanvas.height - sourceY;
+            const isLastSlice = remainingHeight <= contentSliceHeight;
+            const currentContentHeight = isLastSlice
+                ? remainingHeight
+                : getSafeContentSliceHeight(sourceCanvas, sourceY, contentSliceHeight, protectedRanges);
 
-            for (const bounds of cardBounds) {
-                await addSliceToZip(
-                    zip,
-                    sourceCanvas,
-                    bounds.top,
-                    bounds.bottom - bounds.top,
-                    index,
-                    topPaddingHeight,
-                    watermarkBandHeight,
-                    watermarkSettings
-                );
-                index += 1;
-            }
-        } else {
-            const protectedRanges = getProtectedTextRanges(sourceCanvas);
+            await addSliceToZip(
+                zip,
+                sourceCanvas,
+                sourceY,
+                currentContentHeight,
+                index,
+                topPaddingHeight,
+                watermarkBandHeight,
+                watermarkSettings,
+                isLastSlice ? null : sliceHeight
+            );
 
-            while (sourceY < sourceCanvas.height) {
-                const currentContentHeight = getSafeContentSliceHeight(
-                    sourceCanvas,
-                    sourceY,
-                    contentSliceHeight,
-                    protectedRanges
-                );
-
-                await addSliceToZip(
-                    zip,
-                    sourceCanvas,
-                    sourceY,
-                    currentContentHeight,
-                    index,
-                    topPaddingHeight,
-                    watermarkBandHeight,
-                    watermarkSettings
-                );
-
-                sourceY += currentContentHeight;
-                index += 1;
-            }
+            sourceY += currentContentHeight;
+            index += 1;
         }
 
         button.innerText = "正在打包...";
@@ -1773,6 +1813,10 @@ document.querySelectorAll("textarea").forEach(autoResizeTextarea);
 
 if (paragraphTitleSpacingInput) {
     paragraphTitleSpacingInput.value = String(paragraphTitleSpacing);
+}
+
+if (sideSpacingInput) {
+    sideSpacingInput.value = String(sideSpacing);
 }
 
 if (moduleSpacingInput) {
