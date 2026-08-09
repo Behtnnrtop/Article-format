@@ -3,7 +3,7 @@
 =========================== */
 
 const STORAGE_KEY = "article-summary-state";
-const STATE_SCHEMA_VERSION = 9;
+const STATE_SCHEMA_VERSION = 10;
 
 let globalFont = {
     year: 78,  // 标题
@@ -14,12 +14,15 @@ let globalFont = {
 let backgroundColor = "#efefef";
 let textColor = "#111111";
 let fontFamily = '"Microsoft YaHei",sans-serif';
+const CARD_TITLE_DEFAULT_FONT_FAMILY = '"Songti SC","STSong","SimSun",serif';
+const INHERIT_FONT_VALUE = "__inherit__";
 let lineSpacing = 1.8;
 let paragraphSpacing = 0;
 let sideSpacing = 0;
 let paragraphTitleSpacing = 0;
 let moduleSpacing = 58;
 let topPadding = 58;
+let sideHeaderReserve = 0;
 let showTimeline = true;
 let showMonthTitles = true;
 let showMonthUnderlines = true;
@@ -32,6 +35,23 @@ const MAX_PREVIEW_FONT_SCALE = 0.42;
 const MIN_PREVIEW_FONT_SCALE = 0.32;
 const BASE_COPYRIGHT_FONT_SIZE = 13;
 const BASE_RESOLUTION_WIDTH = 1080;
+const SUBTITLE_SETTINGS = Object.freeze({
+    fontFamily: "inherit",
+    fontWeight: "400",
+    fontStyle: "normal",
+    lineHeight: 1.2,
+    desktop: {
+        letterSpacingEm: 0.55,
+        gapToTitlePx: 20,
+        inlineTitleIndentPx: 18
+    },
+    mobile: {
+        letterSpacingEm: 0.28,
+        gapToTitlePx: 15,
+        inlineTitleIndentPx: 12
+    },
+    verticalBottomAlignOffsetPx: -5
+});
 
 const phoneResolutions = {
     "1080x2376": { width: 1080, height: 2376, cssWidth: 360 },
@@ -81,6 +101,45 @@ function getResolutionDesignScale() {
     return resolution.width / BASE_RESOLUTION_WIDTH;
 }
 
+function getSubtitleSettings(previewFontScale = getPreviewFontScale()) {
+    const responsiveSettings = isMobileViewport()
+        ? SUBTITLE_SETTINGS.mobile
+        : SUBTITLE_SETTINGS.desktop;
+    const fontSizePx = globalFont.subtitle * previewFontScale;
+    const letterSpacingEm = responsiveSettings.letterSpacingEm;
+
+    return {
+        fontFamily: SUBTITLE_SETTINGS.fontFamily,
+        fontWeight: SUBTITLE_SETTINGS.fontWeight,
+        fontStyle: SUBTITLE_SETTINGS.fontStyle,
+        lineHeight: SUBTITLE_SETTINGS.lineHeight,
+        fontSizePx,
+        letterSpacing: `${letterSpacingEm}em`,
+        verticalLetterSpacing: `${letterSpacingEm}em`,
+        gapToTitlePx: responsiveSettings.gapToTitlePx,
+        gapToSideTitlePx: responsiveSettings.gapToTitlePx,
+        inlineTitleIndentPx: responsiveSettings.inlineTitleIndentPx,
+        verticalBottomAlignOffsetPx: SUBTITLE_SETTINGS.verticalBottomAlignOffsetPx
+    };
+}
+
+function applySubtitleSettings(element, previewFontScale = getPreviewFontScale()) {
+    if (!element) return null;
+
+    const settings = getSubtitleSettings(previewFontScale);
+    element.style.setProperty("--subtitle-font-family", settings.fontFamily);
+    element.style.setProperty("--subtitle-font-size", `${settings.fontSizePx}px`);
+    element.style.setProperty("--subtitle-font-weight", settings.fontWeight);
+    element.style.setProperty("--subtitle-font-style", settings.fontStyle);
+    element.style.setProperty("--subtitle-line-height", String(settings.lineHeight));
+    element.style.setProperty("--subtitle-letter-spacing", settings.letterSpacing);
+    element.style.setProperty("--subtitle-gap-to-title", `${settings.gapToTitlePx}px`);
+    element.style.setProperty("--subtitle-title-indent", `${settings.inlineTitleIndentPx}px`);
+    element.style.setProperty("--vertical-text-letter-spacing", settings.verticalLetterSpacing);
+
+    return settings;
+}
+
 const presetColors = [
     "#ffffff",
     "#d9d9d9",
@@ -100,6 +159,7 @@ const sideSpacingInput = document.getElementById("sideSpacingInput");
 const paragraphTitleSpacingInput = document.getElementById("paragraphTitleSpacingInput");
 const moduleSpacingInput = document.getElementById("moduleSpacingInput");
 const topPaddingInput = document.getElementById("topPaddingInput");
+const sideHeaderReserveInput = document.getElementById("sideHeaderReserveInput");
 
 const fallbackFontOptions = [
     { label: "默认字体", value: '"Microsoft YaHei",sans-serif' },
@@ -108,12 +168,66 @@ const fallbackFontOptions = [
 
 let fontOptions = [...fallbackFontOptions];
 
+const chineseFontLabels = new Map([
+    ["microsoft yahei", "微软雅黑"],
+    ["microsoft yahei ui", "微软雅黑 UI"],
+    ["microsoft jhenghei", "微软正黑体"],
+    ["microsoft jhenghei ui", "微软正黑体 UI"],
+    ["simsun", "宋体"],
+    ["simsun-extb", "宋体 ExtB"],
+    ["simsun-extg", "宋体 ExtG"],
+    ["nsimsun", "新宋体"],
+    ["simhei", "黑体"],
+    ["simkai", "楷体"],
+    ["kaiti", "楷体"],
+    ["fangsong", "仿宋"],
+    ["dengxian", "等线"],
+    ["dengxian light", "等线 Light"],
+    ["youyuan", "幼圆"],
+    ["lishu", "隶书"],
+    ["stkaiti", "华文楷体"],
+    ["stxingkai", "华文行楷"],
+    ["stfangsong", "华文仿宋"],
+    ["stxihei", "华文细黑"],
+    ["stheiti", "华文黑体"],
+    ["stsong", "华文宋体"],
+    ["stzhongsong", "华文中宋"],
+    ["stcaiyun", "华文彩云"],
+    ["sthupo", "华文琥珀"],
+    ["stliti", "华文隶书"],
+    ["stxinwei", "华文新魏"],
+    ["fzbiaosong-z05", "方正标宋"],
+    ["fzshuti", "方正舒体"],
+    ["fzyaoti", "方正姚体"],
+    ["source han sans sc", "思源黑体"],
+    ["source han serif sc", "思源宋体"],
+    ["noto sans cjk sc", "Noto Sans CJK 简体中文"],
+    ["noto serif cjk sc", "Noto Serif CJK 简体中文"],
+    ["noto sans sc", "Noto Sans 简体中文"],
+    ["noto serif sc", "Noto Serif 简体中文"],
+    ["pingfang sc", "苹方"],
+    ["hiragino sans gb", "冬青黑体简体中文"],
+    ["songti sc", "宋体-简"],
+    ["heiti sc", "黑体-简"],
+    ["kaiti sc", "楷体-简"],
+    ["weibei sc", "魏碑-简"],
+    ["xingkai sc", "行楷-简"],
+    ["yuanti sc", "圆体-简"],
+    ["lxgw wenkai", "霞鹜文楷"],
+    ["lxgw wenkai screen", "霞鹜文楷屏幕版"],
+    ["lxgw marker gothic", "霞鹜漫黑"]
+]);
+
 let data = [
     {
         title: "一月",
         text: "Loading...",
         titleSize: 70,  // 段落标题
         textSize: 48,   // 段落内容
+        titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
+        contentFontFamily: INHERIT_FONT_VALUE,
+        contentFontToolbarValue: INHERIT_FONT_VALUE,
+        hidden: false,
         lineSpacing: 1.8,
         paragraphSpacing: 0
     },
@@ -122,6 +236,10 @@ let data = [
         text: "Loading...",
         titleSize: 70,
         textSize: 48,
+        titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
+        contentFontFamily: INHERIT_FONT_VALUE,
+        contentFontToolbarValue: INHERIT_FONT_VALUE,
+        hidden: false,
         lineSpacing: 1.8,
         paragraphSpacing: 0
     }
@@ -129,6 +247,7 @@ let data = [
 
 let editorWidth = null;
 let phonePreviewFrame = null;
+const richTextSelections = new Map();
 
 function loadState() {
     try {
@@ -152,10 +271,6 @@ function loadState() {
 
         if (typeof state.backgroundColor === "string") {
             backgroundColor = state.backgroundColor;
-        }
-
-        if (typeof state.fontFamily === "string") {
-            fontFamily = state.fontFamily;
         }
 
         if (typeof state.textColor === "string") {
@@ -189,6 +304,9 @@ function loadState() {
 
         if (typeof state.topPadding === "number") {
             topPadding = state.topPadding;
+        }
+        if (typeof state.sideHeaderReserve === "number") {
+            sideHeaderReserve = state.sideHeaderReserve;
         }
 
         data = data.map((item) => ({
@@ -260,7 +378,13 @@ function normalizeData(items, schemaVersion) {
             ...item,
             text: shouldEscapeText ? plainTextToRichText(text) : sanitizeRichText(text),
             titleSize: shouldNormalizeFontSizes ? Math.max(titleSize, 48) : titleSize,
-            textSize: shouldNormalizeFontSizes ? Math.max(textSize, 18) : textSize
+            textSize: shouldNormalizeFontSizes ? Math.max(textSize, 18) : textSize,
+            titleFontFamily: typeof item.titleFontFamily === "string" ? item.titleFontFamily : CARD_TITLE_DEFAULT_FONT_FAMILY,
+            contentFontFamily: typeof item.contentFontFamily === "string" ? item.contentFontFamily : INHERIT_FONT_VALUE,
+            contentFontToolbarValue: typeof item.contentFontToolbarValue === "string"
+                ? item.contentFontToolbarValue
+                : (typeof item.contentFontFamily === "string" ? item.contentFontFamily : INHERIT_FONT_VALUE),
+            hidden: item.hidden === true
         };
     });
 }
@@ -282,7 +406,7 @@ function sanitizeRichText(value) {
     const template = document.createElement("template");
     template.innerHTML = String(value ?? "");
 
-    const allowedTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "BR", "DIV", "P"]);
+    const allowedTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "BR", "DIV", "P", "SPAN"]);
 
     function cleanNode(node) {
         Array.from(node.childNodes).forEach((child) => {
@@ -290,14 +414,40 @@ function sanitizeRichText(value) {
 
             cleanNode(child);
 
+            if (child.tagName === "FONT") {
+                const fontFamilyValue = sanitizeFontFamilyValue(child.getAttribute("face"));
+
+                if (fontFamilyValue) {
+                    const span = document.createElement("span");
+                    span.style.fontFamily = fontFamilyValue;
+                    span.append(...Array.from(child.childNodes));
+                    child.replaceWith(span);
+                } else {
+                    child.replaceWith(...Array.from(child.childNodes));
+                }
+                return;
+            }
+
             if (!allowedTags.has(child.tagName)) {
                 child.replaceWith(...Array.from(child.childNodes));
                 return;
             }
 
-            Array.from(child.attributes).forEach((attribute) => {
-                child.removeAttribute(attribute.name);
-            });
+            if (child.tagName === "SPAN") {
+                const fontFamilyValue = sanitizeFontFamilyValue(child.style.fontFamily);
+                Array.from(child.attributes).forEach((attribute) => {
+                    child.removeAttribute(attribute.name);
+                });
+
+                if (fontFamilyValue) {
+                    child.style.fontFamily = fontFamilyValue;
+                } else {
+                    child.replaceWith(...Array.from(child.childNodes));
+                }
+                return;
+            }
+
+            Array.from(child.attributes).forEach((attribute) => child.removeAttribute(attribute.name));
         });
     }
 
@@ -399,7 +549,6 @@ function saveState() {
                 data,
                 editorWidth,
                 backgroundColor,
-                fontFamily,
                 textColor,
                 lineSpacing,
                 paragraphSpacing,
@@ -407,6 +556,7 @@ function saveState() {
                 paragraphTitleSpacing,
                 moduleSpacing,
                 topPadding,
+                sideHeaderReserve,
                 showTimeline,
                 showMonthTitles,
                 showMonthUnderlines,
@@ -417,7 +567,7 @@ function saveState() {
                 subtitlePosition,
                 yearTitle: document.getElementById("yearInput")?.value ?? "文手年度总结",
                 sideHeader: document.getElementById("sideInput")?.value ?? "2025",
-                subtitle: document.getElementById("subtitle")?.innerText ?? "yearly summary",
+                subtitle: document.getElementById("subtitleInput")?.value ?? "yearly summary",
                 schemaVersion: STATE_SCHEMA_VERSION
             })
         );
@@ -430,30 +580,97 @@ function quoteCssFontFamily(value) {
     return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+function normalizeFontFamilyName(value) {
+    return String(value ?? "")
+        .replace(/^["']|["']$/g, "")
+        .trim()
+        .toLowerCase();
+}
+
+function normalizeFontFamilyForCompare(value) {
+    return String(value ?? "")
+        .replace(/["']/g, "")
+        .replace(/\s+/g, "")
+        .toLowerCase();
+}
+
+function getPrimaryFontFamily(value) {
+    return String(value ?? "")
+        .split(",")[0]
+        .replace(/^["']|["']$/g, "")
+        .trim();
+}
+
+function getAllowedFontFamilyValues() {
+    return [
+        fontFamily,
+        CARD_TITLE_DEFAULT_FONT_FAMILY,
+        ...fontOptions.map((option) => option.value)
+    ];
+}
+
+function sanitizeFontFamilyValue(value) {
+    const normalizedValue = normalizeFontFamilyForCompare(value);
+    if (!normalizedValue) return "";
+
+    const knownValue = getAllowedFontFamilyValues().find((allowedValue) => {
+        const normalizedAllowed = normalizeFontFamilyForCompare(allowedValue);
+        const normalizedAllowedPrimary = normalizeFontFamilyForCompare(getPrimaryFontFamily(allowedValue));
+
+        return normalizedValue === normalizedAllowed || normalizedValue === normalizedAllowedPrimary;
+    });
+
+    if (knownValue) return knownValue;
+
+    const rawValue = String(value).trim();
+    return /^[\u4e00-\u9fff\w\s"',.\-]+$/.test(rawValue) ? rawValue : "";
+}
+
+function getFontDisplayLabel(family, fullNames = []) {
+    const normalizedFamily = normalizeFontFamilyName(family);
+    const localizedName = fullNames.find((name) => /[\u4e00-\u9fff]/.test(name));
+
+    return chineseFontLabels.get(normalizedFamily) || localizedName || family;
+}
+
+function resolveCardTitleFontFamily(item) {
+    return item?.titleFontFamily || CARD_TITLE_DEFAULT_FONT_FAMILY;
+}
+
+function resolveCardContentFontFamily(item) {
+    return item?.contentFontFamily && item.contentFontFamily !== INHERIT_FONT_VALUE
+        ? item.contentFontFamily
+        : fontFamily;
+}
+
+function renderFontOptionElements(selectedValue, extraOptions = []) {
+    const optionMap = new Map();
+
+    [...extraOptions, ...fontOptions].forEach((option) => {
+        if (!option?.value || optionMap.has(option.value)) return;
+        optionMap.set(option.value, option);
+    });
+
+    if (selectedValue && selectedValue !== INHERIT_FONT_VALUE && !optionMap.has(selectedValue)) {
+        optionMap.set(selectedValue, { label: "当前字体", value: selectedValue });
+    }
+
+    return Array.from(optionMap.values())
+        .map((option) => {
+            const optionValue = escapeHtml(option.value);
+            const fontStyle = option.value === INHERIT_FONT_VALUE ? fontFamily : option.value;
+            const selected = option.value === selectedValue ? " selected" : "";
+
+            return `<option value="${optionValue}" style="font-family:${escapeHtml(fontStyle)};"${selected}>${escapeHtml(option.label)}</option>`;
+        })
+        .join("");
+}
+
 function setFontStatus(message) {
     const fontStatus = document.getElementById("fontStatus");
     if (fontStatus) {
         fontStatus.innerText = message;
     }
-}
-
-function renderFontSelectOptions() {
-    const fontSelect = document.getElementById("fontSelect");
-    if (!fontSelect) return;
-
-    const hasCurrentFont = fontOptions.some((option) => option.value === fontFamily);
-    const options = hasCurrentFont
-        ? fontOptions
-        : [{ label: "当前字体", value: fontFamily }, ...fontOptions];
-
-    fontSelect.innerHTML = options
-        .map((option) => {
-            const optionValue = escapeHtml(option.value);
-            return `<option value="${optionValue}" style="font-family:${optionValue};">${escapeHtml(option.label)}</option>`;
-        })
-        .join("");
-    fontSelect.value = fontFamily;
-    fontSelect.style.fontFamily = fontFamily;
 }
 
 async function loadSystemFonts() {
@@ -472,15 +689,26 @@ async function loadSystemFonts() {
         setFontStatus("正在请求本机字体权限...");
 
         const fonts = await window.queryLocalFonts();
-        const systemFontOptions = Array.from(
-            new Map(
-                fonts
-                    .map((font) => font.family)
-                    .filter(Boolean)
-                    .sort((a, b) => a.localeCompare(b, "zh-Hans-CN"))
-                    .map((family) => [family, { label: family, value: quoteCssFontFamily(family) }])
-            ).values()
-        );
+        const fontGroups = new Map();
+
+        fonts.forEach((font) => {
+            if (!font.family) return;
+
+            if (!fontGroups.has(font.family)) {
+                fontGroups.set(font.family, []);
+            }
+
+            if (font.fullName) {
+                fontGroups.get(font.family).push(font.fullName);
+            }
+        });
+
+        const systemFontOptions = Array.from(fontGroups.entries())
+            .map(([family, fullNames]) => ({
+                label: getFontDisplayLabel(family, fullNames),
+                value: quoteCssFontFamily(family)
+            }))
+            .sort((a, b) => a.label.localeCompare(b.label, "zh-Hans-CN"));
 
         const fallbackValues = new Set(fallbackFontOptions.map((option) => option.value));
         fontOptions = [
@@ -488,7 +716,7 @@ async function loadSystemFonts() {
             ...systemFontOptions.filter((option) => !fallbackValues.has(option.value))
         ];
 
-        renderFontSelectOptions();
+        renderEditor();
         setFontStatus(`已读取 ${systemFontOptions.length} 个本机字体。`);
     } catch (error) {
         const denied = error && (error.name === "NotAllowedError" || error.name === "SecurityError");
@@ -514,8 +742,7 @@ function renderPreview() {
     document.getElementById("year").innerText =
         document.getElementById("yearInput").value;
 
-    document.getElementById("side").innerText =
-        document.getElementById("sideInput").value;
+    renderVerticalTextTarget("side");
 
     document.getElementById("year").style.fontSize =
         globalFont.year * previewFontScale + "px";
@@ -544,6 +771,7 @@ function renderPreview() {
         poster.style.fontFamily = fontFamily;
         poster.style.setProperty("--text-color", textColor);
         poster.style.setProperty("--text-side-spacing", `${sideSpacing}px`);
+        poster.style.setProperty("--side-header-reserve", `${sideHeaderReserve}px`);
         poster.style.setProperty("--card-title-spacing", `${paragraphTitleSpacing}px`);
         poster.style.setProperty("--module-spacing", `${moduleSpacing}px`);
         poster.classList.toggle("noTimeline", !showTimeline);
@@ -553,17 +781,7 @@ function renderPreview() {
         poster.classList.toggle("subtitleVerticalLeft", subtitlePosition === "verticalLeft");
     }
 
-    if (subtitleInput) {
-        const subtitleEl = document.getElementById("subtitle");
-        if (subtitleEl && subtitleEl.innerText !== subtitleInput.value) {
-            subtitleEl.innerText = subtitleInput.value;
-        }
-    }
-
-    const subtitleEl = document.getElementById("subtitle");
-    if (subtitleEl) {
-        subtitleEl.style.fontSize = `${globalFont.subtitle * previewFontScale}px`;
-    }
+    renderVerticalTextTarget("subtitle");
 
     const copyrightEl = document.getElementById("copyright");
     if (copyrightEl) {
@@ -573,6 +791,8 @@ function renderPreview() {
     let html = "";
 
     data.forEach((item) => {
+        if (item.hidden) return;
+
         const titleText = escapeHtml(item.title);
         const textHtml = renderRichTextPreview(item.text);
         const itemLineSpacing = getItemLineSpacing(item);
@@ -580,9 +800,9 @@ function renderPreview() {
 
         html += `
         <div class="card">
-            <div class="cardTitle" style="font-size:${item.titleSize * previewFontScale}px;">${titleText}</div>
+            <div class="cardTitle" style="font-size:${item.titleSize * previewFontScale}px;font-family:${escapeHtml(resolveCardTitleFontFamily(item))};">${titleText}</div>
             <div class="cardContent">
-                <div class="info" style="font-size:${item.textSize * previewFontScale}px;--content-line-height:${itemLineSpacing};--content-paragraph-spacing:${itemParagraphSpacing}px;">${textHtml}</div>
+                <div class="info" style="font-size:${item.textSize * previewFontScale}px;font-family:${escapeHtml(resolveCardContentFontFamily(item))};--content-line-height:${itemLineSpacing};--content-paragraph-spacing:${itemParagraphSpacing}px;">${textHtml}</div>
             </div>
         </div>
         `;
@@ -592,14 +812,13 @@ function renderPreview() {
 
     syncCardsOffset();
 
-    const fontSelect = document.getElementById("fontSelect");
-    if (fontSelect && fontSelect.value !== fontFamily) {
-        fontSelect.value = fontFamily;
+    if (subtitlePosition === "verticalLeft") {
+        requestAnimationFrame(syncCardsOffset);
     }
 
     if (subtitleInput) {
         const subtitleEl = document.getElementById("subtitle");
-        if (subtitleEl && subtitleInput.value !== subtitleEl.innerText) {
+        if (subtitlePosition !== "verticalLeft" && subtitleEl && subtitleInput.value !== subtitleEl.innerText) {
             subtitleInput.value = subtitleEl.innerText;
         }
     }
@@ -620,6 +839,10 @@ function renderPreview() {
         topPaddingInput.value = String(topPadding);
     }
 
+    if (sideHeaderReserveInput && Number(sideHeaderReserveInput.value) !== sideHeaderReserve) {
+        sideHeaderReserveInput.value = String(sideHeaderReserve);
+    }
+
     renderBackgroundPalette();
     renderTextColorPalette();
     updateTimelineButtons();
@@ -636,6 +859,10 @@ function syncCardsOffset() {
 
     if (!poster || !cards || !side) return;
 
+    if (subtitle) {
+        applySubtitleSettings(subtitle);
+    }
+
     cards.style.marginTop = "0px";
 
     if (!showSideHeader) {
@@ -649,12 +876,23 @@ function syncCardsOffset() {
     const headerRect = header ? header.getBoundingClientRect() : null;
     const sideRect = side.getBoundingClientRect();
     if (subtitlePosition === "verticalLeft" && subtitle) {
-        const subtitleStyle = window.getComputedStyle(subtitle);
-        const authorGap = parseFloat(subtitleStyle.marginTop || "0") || 0;
-        const subtitleTop = Math.max(sideRect.bottom - subtitleRect.height - posterRect.top, 0);
-        const subtitleRight = Math.max(posterRect.right - sideRect.left + authorGap, 0);
-        poster.style.setProperty("--subtitle-vertical-top", `${subtitleTop}px`);
+        const subtitleSettings = getSubtitleSettings();
+        const initialSubtitleTop = Math.max(sideRect.bottom - subtitleRect.height - posterRect.top, 0);
+        const subtitleRight = Math.max(posterRect.right - sideRect.left + subtitleSettings.gapToSideTitlePx, 0);
+        poster.style.setProperty("--subtitle-vertical-top", `${initialSubtitleTop}px`);
         poster.style.setProperty("--subtitle-vertical-right", `${subtitleRight}px`);
+        subtitleRect = subtitle.getBoundingClientRect();
+
+        const sideTextRect = getElementTextBounds(side);
+        const subtitleTextRect = getElementTextBounds(subtitle);
+        if (sideTextRect && subtitleTextRect) {
+            const subtitleTop = Math.max(
+                initialSubtitleTop + sideTextRect.bottom - subtitleTextRect.bottom + subtitleSettings.verticalBottomAlignOffsetPx,
+                0
+            );
+            poster.style.setProperty("--subtitle-vertical-top", `${subtitleTop}px`);
+        }
+
         subtitleRect = subtitle.getBoundingClientRect();
     } else {
         poster.style.removeProperty("--subtitle-vertical-top");
@@ -672,6 +910,31 @@ function syncCardsOffset() {
     cards.style.marginTop = `${requiredGap}px`;
 }
 
+function getElementTextBounds(element) {
+    if (!element) return null;
+
+    const range = document.createRange();
+    range.selectNodeContents(element);
+
+    const rects = Array.from(range.getClientRects())
+        .filter((rect) => rect.width > 0 && rect.height > 0);
+    range.detach();
+
+    if (!rects.length) return null;
+
+    return rects.reduce((bounds, rect) => ({
+        top: Math.min(bounds.top, rect.top),
+        right: Math.max(bounds.right, rect.right),
+        bottom: Math.max(bounds.bottom, rect.bottom),
+        left: Math.min(bounds.left, rect.left)
+    }), {
+        top: rects[0].top,
+        right: rects[0].right,
+        bottom: rects[0].bottom,
+        left: rects[0].left
+    });
+}
+
 function render() {
     renderPreview();
     renderEditor();
@@ -685,17 +948,31 @@ function renderEditor() {
         const textHtml = sanitizeRichText(item.text);
         const itemLineSpacing = getItemLineSpacing(item);
         const itemParagraphSpacing = getItemParagraphSpacing(item);
+        const titleFontFamily = resolveCardTitleFontFamily(item);
+        const contentFontToolbarValue = item.contentFontToolbarValue || item.contentFontFamily || INHERIT_FONT_VALUE;
+        const titleFontOptions = renderFontOptionElements(titleFontFamily, [
+            { label: "默认标题字体", value: CARD_TITLE_DEFAULT_FONT_FAMILY }
+        ]);
+        const contentFontOptions = renderFontOptionElements(contentFontToolbarValue, [
+            { label: "默认内容字体", value: INHERIT_FONT_VALUE }
+        ]);
 
         html += `
-        <div class="block">
+        <div class="block${item.hidden ? " hiddenBlock" : ""}">
             <div class="blockHeader">
-                <h3>第 ${index + 1} 段</h3>
-                <button class="deleteBtn" onclick="deleteCard(${index})">删除作品</button>
+                <h3>第 ${index + 1} 段${item.hidden ? "（已隐藏）" : ""}</h3>
+                <div class="blockHeaderActions">
+                    <button type="button" class="hideBtn" onclick="toggleCardHidden(${index})">${item.hidden ? "显示段落" : "隐藏段落"}</button>
+                    <button type="button" class="deleteBtn" onclick="deleteCard(${index})">删除作品</button>
+                </div>
             </div>
             <label class="inlineLabel">标题 <span class="sizeValue">${item.titleSize}px</span></label>
             <button onclick="changeTitleSize(${index},-2)">A-</button>
             <button onclick="changeTitleSize(${index},2)">A+</button>
-            <textarea rows="2" oninput="autoResizeTextarea(this);changeTitle(${index},this.value)">${titleText}</textarea>
+            <select class="fontSelect blockFontSelect" style="font-family:${escapeHtml(titleFontFamily)};" onchange="changeCardTitleFont(${index},this.value,this)">
+                ${titleFontOptions}
+            </select>
+            <textarea rows="2" style="font-family:${escapeHtml(titleFontFamily)};" oninput="autoResizeTextarea(this);changeTitle(${index},this.value)">${titleText}</textarea>
             <label class="inlineLabel">内容 <span class="sizeValue">${item.textSize}px</span></label>
             <button onclick="changeTextSize(${index},-2)">A-</button>
             <button onclick="changeTextSize(${index},2)">A+</button>
@@ -710,17 +987,29 @@ function renderEditor() {
                 </label>
             </div>
             <div class="richTextBox">
-                <div class="richTextToolbar" onmousedown="event.preventDefault()">
-                    <button type="button" title="粗体" onclick="formatCardText(${index}, 'bold')"><strong>B</strong></button>
-                    <button type="button" title="斜体" onclick="formatCardText(${index}, 'italic')"><em>I</em></button>
-                    <button type="button" title="下划线" onclick="formatCardText(${index}, 'underline')"><u>U</u></button>
-                    <button type="button" title="删除线" onclick="formatCardText(${index}, 'strikeThrough')"><s>S</s></button>
+                <div class="richTextToolbar">
+                    <button type="button" title="粗体" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'bold')"><strong>B</strong></button>
+                    <button type="button" title="斜体" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'italic')"><em>I</em></button>
+                    <button type="button" title="下划线" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'underline')"><u>U</u></button>
+                    <button type="button" title="删除线" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'strikeThrough')"><s>S</s></button>
+                    <select
+                        class="fontSelect richTextFontSelect"
+                        style="font-family:${escapeHtml(contentFontToolbarValue === INHERIT_FONT_VALUE ? resolveCardContentFontFamily(item) : contentFontToolbarValue)};"
+                        title="选中文字字体"
+                        onmousedown="saveRichTextSelection(${index})"
+                        onchange="applyRichTextFont(${index},this.value,this)">
+                        ${contentFontOptions}
+                    </select>
                 </div>
                 <div
                     id="contentEditor-${index}"
                     class="richTextEditor"
                     contenteditable="true"
+                    style="font-family:${escapeHtml(resolveCardContentFontFamily(item))};"
                     oninput="changeText(${index},this.innerHTML)"
+                    onfocus="saveRichTextSelection(${index})"
+                    onkeyup="saveRichTextSelection(${index})"
+                    onmouseup="saveRichTextSelection(${index})"
                     onpaste="pastePlainText(event)">${textHtml}</div>
             </div>
         </div>
@@ -968,15 +1257,114 @@ function changeText(index, value) {
     renderPreview();
 }
 
+function getRichTextEditor(index) {
+    return document.getElementById(`contentEditor-${index}`);
+}
+
+function isRangeInsideElement(range, element) {
+    if (!range || !element) return false;
+
+    const startNode = range.startContainer.nodeType === Node.TEXT_NODE
+        ? range.startContainer.parentNode
+        : range.startContainer;
+    const endNode = range.endContainer.nodeType === Node.TEXT_NODE
+        ? range.endContainer.parentNode
+        : range.endContainer;
+
+    return (element.contains(startNode) || element === startNode)
+        && (element.contains(endNode) || element === endNode);
+}
+
+function saveRichTextSelection(index) {
+    const editorEl = getRichTextEditor(index);
+    const selection = window.getSelection();
+
+    if (!editorEl || !selection || selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+    const commonAncestor = range.commonAncestorContainer;
+    const selectionNode = commonAncestor.nodeType === Node.TEXT_NODE
+        ? commonAncestor.parentNode
+        : commonAncestor;
+
+    if (editorEl.contains(selectionNode) || editorEl === selectionNode) {
+        richTextSelections.set(index, range.cloneRange());
+    }
+}
+
+function restoreRichTextSelection(index) {
+    const range = richTextSelections.get(index);
+    const selection = window.getSelection();
+    const editorEl = getRichTextEditor(index);
+
+    if (!range || !selection || !isRangeInsideElement(range, editorEl)) return false;
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+}
+
+function getSavedRichTextRange(index) {
+    const range = richTextSelections.get(index);
+    const editorEl = getRichTextEditor(index);
+
+    return isRangeInsideElement(range, editorEl) ? range : null;
+}
+
+function stripRichTextFontSpans(element) {
+    if (!element) return;
+
+    Array.from(element.querySelectorAll("span")).forEach((span) => {
+        if (span.style.fontFamily) {
+            span.replaceWith(...Array.from(span.childNodes));
+        }
+    });
+}
+
 function formatCardText(index, command) {
-    const editorEl = document.getElementById(`contentEditor-${index}`);
+    const editorEl = getRichTextEditor(index);
     if (!editorEl) return;
 
-    document.execCommand(command, false, null);
     editorEl.focus();
+    restoreRichTextSelection(index);
+    document.execCommand(command, false, null);
 
     data[index].text = sanitizeRichText(editorEl.innerHTML);
     editorEl.innerHTML = data[index].text;
+    saveRichTextSelection(index);
+    renderPreview();
+}
+
+function applyRichTextFont(index, value, selectEl = null) {
+    const editorEl = getRichTextEditor(index);
+    if (!editorEl || !data[index]) return;
+
+    const selectedValue = value || INHERIT_FONT_VALUE;
+    const nextFontFamily = selectedValue !== INHERIT_FONT_VALUE ? selectedValue : fontFamily;
+    const savedRange = getSavedRichTextRange(index);
+    const hasSelectedText = Boolean(savedRange && !savedRange.collapsed && String(savedRange).length > 0);
+
+    editorEl.focus();
+
+    if (hasSelectedText) {
+        restoreRichTextSelection(index);
+        document.execCommand("fontName", false, getPrimaryFontFamily(nextFontFamily) || nextFontFamily);
+    } else {
+        data[index].contentFontFamily = selectedValue;
+        stripRichTextFontSpans(editorEl);
+        editorEl.style.fontFamily = resolveCardContentFontFamily(data[index]);
+    }
+
+    data[index].contentFontToolbarValue = selectedValue;
+    data[index].text = sanitizeRichText(editorEl.innerHTML);
+    editorEl.innerHTML = data[index].text;
+    saveRichTextSelection(index);
+
+    if (selectEl) {
+        selectEl.value = selectedValue;
+        selectEl.style.fontFamily = selectedValue === INHERIT_FONT_VALUE ? resolveCardContentFontFamily(data[index]) : selectedValue;
+    }
+
     renderPreview();
 }
 
@@ -1026,11 +1414,17 @@ function changeBackgroundColor(value) {
     renderPreview();
 }
 
-function changeFontFamily(value) {
-    fontFamily = value;
-    const fontSelect = document.getElementById("fontSelect");
-    if (fontSelect) {
-        fontSelect.style.fontFamily = fontFamily;
+function changeCardTitleFont(index, value, selectEl = null) {
+    if (!data[index]) return;
+
+    data[index].titleFontFamily = value || CARD_TITLE_DEFAULT_FONT_FAMILY;
+    if (selectEl) {
+        const nextFontFamily = resolveCardTitleFontFamily(data[index]);
+        selectEl.style.fontFamily = nextFontFamily;
+        const titleInput = selectEl.closest(".block")?.querySelector("textarea");
+        if (titleInput) {
+            titleInput.style.fontFamily = nextFontFamily;
+        }
     }
     renderPreview();
 }
@@ -1088,11 +1482,16 @@ function changeTopPadding(value) {
     renderPreview();
 }
 
+function changeSideHeaderReserve(value) {
+    const nextValue = Number(value);
+    if (Number.isNaN(nextValue)) return;
+
+    sideHeaderReserve = Math.min(Math.max(nextValue, 0), 240);
+    renderPreview();
+}
+
 function changeSubtitle(value) {
-    const subtitleEl = document.getElementById("subtitle");
-    if (subtitleEl) {
-        subtitleEl.innerText = value;
-    }
+    renderVerticalTextTarget("subtitle", value);
     syncCardsOffset();
     schedulePhonePreviewSync();
     saveState();
@@ -1162,9 +1561,20 @@ function addCard() {
         text: "Loading...",
         titleSize: 48,
         textSize: 18,
+        titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
+        contentFontFamily: INHERIT_FONT_VALUE,
+        contentFontToolbarValue: INHERIT_FONT_VALUE,
+        hidden: false,
         lineSpacing: 1.8,
         paragraphSpacing: 0
     });
+    render();
+}
+
+function toggleCardHidden(index) {
+    if (!data[index]) return;
+
+    data[index].hidden = !data[index].hidden;
     render();
 }
 
@@ -1277,10 +1687,9 @@ if (topPaddingInput) {
     };
 }
 
-const fontSelect = document.getElementById("fontSelect");
-if (fontSelect) {
-    fontSelect.onchange = function () {
-        changeFontFamily(this.value);
+if (sideHeaderReserveInput) {
+    sideHeaderReserveInput.oninput = function () {
+        changeSideHeaderReserve(this.value);
     };
 }
 
@@ -1342,127 +1751,321 @@ function restorePosterAfterExport(exportState) {
     exportState.preview.scrollTop = exportState.oldScrollTop;
 }
 
-function fixSideHeaderForExport(clonedDoc) {
-    const side = clonedDoc.getElementById("side");
-    const clonedPoster = clonedDoc.getElementById("poster");
-    if (side && !clonedPoster?.classList.contains("hideSideHeader")) {
-        side.style.visibility = "hidden";
+const ROTATED_VERTICAL_MARKS = new Set(Array.from("【】（）()《》〈〉「」『』[]［］{}｛｝〔〕：/；:;"));
+const VERTICAL_BRACKET_EDGE_OFFSET_EM = 0.18;
+const VERTICAL_PARENTHESIS_ADJUSTMENTS = {
+    "【": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "（": { xEm: 0.1, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "(": { xEm: 0.1, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "《": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "〈": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "「": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "『": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "[": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "［": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "{": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "｛": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "〔": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "】": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "）": { xEm: 0.1, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM  },
+    ")": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "》": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "〉": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "」": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "』": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "]": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "］": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "}": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "｝": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM },
+    "〕": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM }
+};
+
+const VERTICAL_TEXT_TARGETS = {
+    side: {
+        elementId: "side",
+        inputId: "sideInput",
+        isPreviewActive: () => true,
+        isExportActive: (poster) => !poster.classList.contains("hideSideHeader")
+    },
+    subtitle: {
+        elementId: "subtitle",
+        inputId: "subtitleInput",
+        applySettings: (element) => applySubtitleSettings(element),
+        isPreviewActive: () => subtitlePosition === "verticalLeft",
+        isExportActive: (poster) => poster.classList.contains("subtitleVerticalLeft")
     }
-}
+};
 
 function shouldRotateVerticalChar(char) {
-    const rotatedVerticalMarks = new Set(Array.from("【】（）()《》〈〉「」『』[]［］{}｛｝〔〕"));
-    return rotatedVerticalMarks.has(char) || /^[A-Za-z0-9!-~]$/.test(char);
+    return ROTATED_VERTICAL_MARKS.has(char) || /^[A-Za-z0-9!-~]$/.test(char);
 }
 
-function getCanvasFont(style, scale) {
-    const fontStyle = style.fontStyle || "normal";
-    const fontVariant = style.fontVariant || "normal";
-    const fontWeight = style.fontWeight || "normal";
-    const fontSize = parseFloat(style.fontSize || "48") * scale;
-    const fontFamily = style.fontFamily || '"Microsoft YaHei",sans-serif';
+function getVerticalParenthesisAdjustment(char) {
+    return VERTICAL_PARENTHESIS_ADJUSTMENTS[char] || null;
+}
+
+function createVerticalTextLayout(value) {
+    const columns = String(value ?? "")
+        .split("\n")
+        .map((line) => {
+            const chars = Array.from(line || " ").map((char) => {
+                const parenthesisAdjustment = getVerticalParenthesisAdjustment(char);
+
+                return {
+                    char,
+                    rotate: shouldRotateVerticalChar(char),
+                    parenthesisAdjustment
+                };
+            });
+
+            return { chars };
+        });
 
     return {
-        value: `${fontStyle} ${fontVariant} ${fontWeight} ${fontSize}px ${fontFamily}`,
-        size: fontSize
+        columns,
+        maxRows: Math.max(1, ...columns.map((column) => column.chars.length))
     };
 }
 
-function drawExportSideHeader(canvas) {
-    if (!showSideHeader) return;
-
-    const side = document.getElementById("side");
-    const poster = document.getElementById("poster");
-    if (!side || !poster || window.getComputedStyle(side).display === "none") return;
-
-    const ctx = canvas.getContext("2d");
-    const scale = canvas.width / (poster.offsetWidth || canvas.width);
-    const sideStyle = window.getComputedStyle(side);
-    const sideRect = side.getBoundingClientRect();
-    const posterRect = poster.getBoundingClientRect();
-    const font = getCanvasFont(sideStyle, scale);
-    const lineHeightValue = parseFloat(sideStyle.lineHeight || "");
-    const lineHeight = Number.isFinite(lineHeightValue) ? lineHeightValue * scale : font.size * 1.2;
-    const letterSpacingValue = parseFloat(sideStyle.letterSpacing || "");
-    const letterSpacing = Number.isFinite(letterSpacingValue) ? letterSpacingValue * scale : 0;
-    const columnGap = Math.max(font.size * 0.16, letterSpacing);
-    const left = (sideRect.left - posterRect.left) * scale;
-    const top = (sideRect.top - posterRect.top) * scale;
-    const width = sideRect.width * scale;
-    const text = side.innerText || "";
-    const lines = text.split("\n");
-
-    ctx.save();
-    ctx.font = font.value;
-    ctx.fillStyle = sideStyle.color || textColor;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    lines.forEach((line, lineIndex) => {
-        const chars = Array.from(line || " ");
-        const x = left + width - font.size / 2 - lineIndex * (font.size + columnGap);
-
-        chars.forEach((char, charIndex) => {
-            const y = top + font.size / 2 + charIndex * lineHeight;
-
-            if (shouldRotateVerticalChar(char)) {
-                ctx.save();
-                ctx.translate(x, y);
-                ctx.rotate(Math.PI / 2);
-                ctx.fillText(char, 0, 0);
-                ctx.restore();
-            } else {
-                ctx.fillText(char, x, y);
-            }
-        });
-    });
-
-    ctx.restore();
+function createVerticalTextCharElement(doc, charInfo, className = "verticalTextChar") {
+    const span = doc.createElement("span");
+    span.textContent = charInfo.char;
+    const classes = [className];
+    if (charInfo.rotate) {
+        classes.push("rotateVerticalChar");
+    }
+    if (charInfo.parenthesisAdjustment) {
+        classes.push("adjustVerticalParenthesisChar");
+        span.style.setProperty("--vertical-parenthesis-offset-x", `${charInfo.parenthesisAdjustment.xEm}em`);
+        span.style.setProperty("--vertical-parenthesis-offset-y", `${charInfo.parenthesisAdjustment.yEm}em`);
+    }
+    span.className = classes.join(" ");
+    return span;
 }
 
-function fixSubtitleForExport(clonedDoc) {
-    const subtitle = clonedDoc.getElementById("subtitle");
-    const clonedPoster = clonedDoc.getElementById("poster");
-    if (subtitle && clonedPoster?.classList.contains("subtitleVerticalLeft")) {
-        subtitle.style.writingMode = "horizontal-tb";
-        subtitle.style.display = "block";
-        subtitle.style.whiteSpace = "pre-wrap";
-        subtitle.style.transform = "rotate(90deg)";
-        subtitle.style.transformOrigin = "top left";
+function renderVerticalTextFlow(element, value, doc = document) {
+    if (!element) return;
+
+    const layout = createVerticalTextLayout(value);
+    element.innerHTML = "";
+
+    layout.columns.forEach((column) => {
+        const line = doc.createElement("span");
+        line.className = "verticalTextLine";
+
+        column.chars.forEach((charInfo) => {
+            line.appendChild(createVerticalTextCharElement(doc, charInfo));
+        });
+
+        element.appendChild(line);
+    });
+}
+
+function getVerticalTextTargetConfig(target) {
+    return typeof target === "string" ? VERTICAL_TEXT_TARGETS[target] : target;
+}
+
+function getVerticalTextTargetValue(config, fallbackElement = null) {
+    const input = document.getElementById(config.inputId);
+    return input?.value ?? fallbackElement?.innerText ?? "";
+}
+
+function renderVerticalTextTarget(target, value = null) {
+    const config = getVerticalTextTargetConfig(target);
+    if (!config) return;
+
+    const element = document.getElementById(config.elementId);
+    if (!element) return;
+
+    if (typeof config.applySettings === "function") {
+        config.applySettings(element);
+    }
+
+    const text = value ?? getVerticalTextTargetValue(config, element);
+    if (typeof config.isPreviewActive === "function" && !config.isPreviewActive()) {
+        if (element.innerText !== text) {
+            element.innerText = text;
+        }
+        return;
+    }
+
+    renderVerticalTextFlow(element, text);
+}
+
+function applyVerticalTextExportContainerStyles(clone, metrics) {
+    clone.style.visibility = "visible";
+    clone.style.position = "absolute";
+    clone.style.display = "block";
+    clone.style.flexDirection = "initial";
+    clone.style.alignItems = "initial";
+    clone.style.writingMode = "horizontal-tb";
+    clone.style.textOrientation = "mixed";
+    clone.style.whiteSpace = "normal";
+    clone.style.overflow = "visible";
+    clone.style.width = `${metrics.width}px`;
+    clone.style.height = `${metrics.height}px`;
+    clone.style.color = metrics.color;
+    clone.innerHTML = "";
+}
+
+function applyVerticalTextExportCharStyles(span, charInfo, metrics, columnIndex, rowIndex, topOffset) {
+    const centerX = metrics.width - metrics.fontSize / 2 - columnIndex * metrics.columnAdvance;
+    const centerY = topOffset + metrics.fontSize / 2 + rowIndex * metrics.charAdvance;
+
+    span.removeAttribute("class");
+    span.style.position = "absolute";
+    span.style.left = `${centerX - metrics.fontSize / 2}px`;
+    span.style.top = `${centerY - metrics.fontSize / 2}px`;
+    span.style.width = `${metrics.fontSize}px`;
+    span.style.height = `${metrics.fontSize}px`;
+    span.style.display = "inline-flex";
+    span.style.alignItems = "center";
+    span.style.justifyContent = "center";
+    span.style.margin = "0";
+    span.style.padding = "0";
+    span.style.color = metrics.color;
+    span.style.fontFamily = metrics.fontFamily;
+    span.style.fontSize = metrics.fontSizeText;
+    span.style.fontWeight = metrics.fontWeight;
+    span.style.fontStyle = metrics.fontStyle;
+    span.style.writingMode = "horizontal-tb";
+    span.style.textOrientation = "mixed";
+    span.style.lineHeight = "1";
+    span.style.letterSpacing = "0";
+    span.style.transformOrigin = "center center";
+
+    if (charInfo.parenthesisAdjustment) {
+        span.style.left = `${centerX - metrics.fontSize / 2 + charInfo.parenthesisAdjustment.xEm * metrics.fontSize}px`;
+        span.style.top = `${centerY - metrics.fontSize / 2 + charInfo.parenthesisAdjustment.yEm * metrics.fontSize}px`;
+    }
+
+    if (charInfo.rotate) {
+        span.style.transform = "rotate(90deg)";
     }
 }
 
-function capturePosterCanvas({ hideCopyright = false } = {}) {
-    const exportState = preparePosterForExport();
-    if (!exportState) return Promise.reject(new Error("未找到预览区域，无法导出。"));
+function getVerticalTextExportMetrics(source, clone, clonedDoc) {
+    const sourceRect = source.getBoundingClientRect();
+    const sourceStyle = window.getComputedStyle(source);
+    const cloneStyle = clonedDoc.defaultView.getComputedStyle(clone);
+    const fontSize = parseFloat(sourceStyle.fontSize || cloneStyle.fontSize || "48");
+    const lineHeightValue = parseFloat(sourceStyle.lineHeight || cloneStyle.lineHeight || "");
+    const letterSpacingValue = parseFloat(sourceStyle.letterSpacing || cloneStyle.letterSpacing || "");
+    const letterSpacing = Number.isFinite(letterSpacingValue) ? letterSpacingValue : 0;
 
-    return html2canvas(exportState.poster, {
-        backgroundColor: backgroundColor,
-        scale: 3,
-        useCORS: true,
-        onclone: (clonedDoc) => {
-            fixSideHeaderForExport(clonedDoc);
-            fixSubtitleForExport(clonedDoc);
+    return {
+        fontSize,
+        fontSizeText: sourceStyle.fontSize,
+        fontFamily: sourceStyle.fontFamily,
+        fontWeight: sourceStyle.fontWeight,
+        fontStyle: sourceStyle.fontStyle,
+        color: sourceStyle.color || textColor,
+        width: Math.max(sourceRect.width, fontSize),
+        height: Math.max(sourceRect.height, fontSize),
+        columnAdvance: Number.isFinite(lineHeightValue) ? lineHeightValue : fontSize * 1.2,
+        charAdvance: fontSize + Math.max(letterSpacing, 0)
+    };
+}
 
-            if (hideCopyright) {
-                const copyright = clonedDoc.getElementById("copyright");
-                if (copyright) {
-                    copyright.style.visibility = "hidden";
-                    copyright.style.marginTop = "0";
-                    copyright.style.height = "0";
-                    copyright.style.overflow = "hidden";
-                }
-            }
-        }
-    }).then((canvas) => {
-        drawExportSideHeader(canvas);
-        return canvas;
-    }).finally(() => {
-        restorePosterAfterExport(exportState);
+function renderVerticalTextAbsolute(clone, value, metrics, clonedDoc) {
+    const layout = createVerticalTextLayout(value);
+    applyVerticalTextExportContainerStyles(clone, metrics);
+
+    layout.columns.forEach((column, columnIndex) => {
+        const topOffset = Math.max(layout.maxRows - column.chars.length, 0) * metrics.charAdvance;
+
+        column.chars.forEach((charInfo, rowIndex) => {
+            const span = createVerticalTextCharElement(clonedDoc, charInfo);
+            applyVerticalTextExportCharStyles(span, charInfo, metrics, columnIndex, rowIndex, topOffset);
+            clone.appendChild(span);
+        });
     });
 }
 
+function renderVerticalTextCloneElement(clonedDoc, target) {
+    const config = getVerticalTextTargetConfig(target);
+    if (!config) return;
+
+    const source = document.getElementById(config.elementId);
+    const clone = clonedDoc.getElementById(config.elementId);
+    if (!source || !clone || window.getComputedStyle(source).display === "none") return;
+
+    const text = getVerticalTextTargetValue(config, source);
+    if (!text.trim()) return;
+
+    renderVerticalTextAbsolute(
+        clone,
+        text,
+        getVerticalTextExportMetrics(source, clone, clonedDoc),
+        clonedDoc
+    );
+}
+
+function renderVerticalTextForExport(clonedDoc) {
+    const clonedPoster = clonedDoc.getElementById("poster");
+    if (!clonedPoster) return;
+
+    Object.values(VERTICAL_TEXT_TARGETS).forEach((config) => {
+        if (typeof config.isExportActive === "function" && !config.isExportActive(clonedPoster)) return;
+        renderVerticalTextCloneElement(clonedDoc, config);
+    });
+}
+
+async function capturePosterCanvas({ hideCopyright = false, scale = 3, afterCapture = null } = {}) {
+    const exportState = preparePosterForExport();
+    if (!exportState) return Promise.reject(new Error("未找到预览区域，无法导出。"));
+
+    try {
+        if (document.fonts?.ready) {
+            await document.fonts.ready;
+        }
+
+        const canvas = await html2canvas(exportState.poster, {
+            backgroundColor: backgroundColor,
+            scale,
+            useCORS: true,
+            onclone: (clonedDoc) => {
+                const clonedPoster = clonedDoc.getElementById("poster");
+                if (clonedPoster) {
+                    clonedPoster.style.setProperty("--text-color", textColor);
+                    clonedPoster.style.setProperty("--text-side-spacing", `${sideSpacing}px`);
+                    clonedPoster.style.setProperty("--side-header-reserve", `${sideHeaderReserve}px`);
+                    clonedPoster.style.setProperty("--card-title-spacing", `${paragraphTitleSpacing}px`);
+                    clonedPoster.style.setProperty("--module-spacing", `${moduleSpacing}px`);
+                    clonedPoster.classList.toggle("noTimeline", !showTimeline);
+                    clonedPoster.classList.toggle("hideMonthTitles", !showMonthTitles);
+                    clonedPoster.classList.toggle("hideMonthUnderlines", !showMonthUnderlines);
+                    clonedPoster.classList.toggle("hideSideHeader", !showSideHeader);
+                    clonedPoster.classList.toggle("subtitleVerticalLeft", subtitlePosition === "verticalLeft");
+                }
+
+                renderVerticalTextForExport(clonedDoc);
+
+                if (hideCopyright) {
+                    const copyright = clonedDoc.getElementById("copyright");
+                    if (copyright) {
+                        copyright.style.visibility = "hidden";
+                        copyright.style.marginTop = "0";
+                        copyright.style.height = "0";
+                        copyright.style.overflow = "hidden";
+                    }
+                }
+            }
+        });
+
+        if (typeof afterCapture === "function") {
+            afterCapture(canvas);
+        }
+
+        return canvas;
+    } finally {
+        restorePosterAfterExport(exportState);
+    }
+}
+
 async function exportImage() {
+    const mobileFallbackWindow = isLikelyMobileBrowser() ? window.open("", "_blank") : null;
+
     try {
         const sourceCanvas = await capturePosterCanvas();
         const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
@@ -1470,11 +2073,13 @@ async function exportImage() {
         const posterStyle = window.getComputedStyle(document.getElementById("poster"));
         const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
         const canvas = addCanvasTopPadding(sourceCanvas, topPaddingHeight, posterStyle.backgroundColor || backgroundColor);
-        const link = document.createElement("a");
-        link.download = "年度总结.jpg";
-        link.href = canvas.toDataURL("image/jpeg", 1);
-        link.click();
+        const blob = await canvasToBlob(canvas, "image/jpeg", 1);
+        downloadBlob(blob, "年度总结.jpg", { fallbackWindow: mobileFallbackWindow });
     } catch (error) {
+        if (mobileFallbackWindow && !mobileFallbackWindow.closed) {
+            mobileFallbackWindow.close();
+        }
+
         window.alert(error?.message || "导出失败，请稍后再试。");
     }
 }
@@ -1547,6 +2152,32 @@ function canvasToBlob(canvas, type = "image/jpeg", quality = 0.95) {
     });
 }
 
+function isLikelyMobileBrowser() {
+    return isMobileViewport() || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+function downloadBlob(blob, filename, { fallbackWindow = null } = {}) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.rel = "noopener";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    window.setTimeout(() => {
+        if (fallbackWindow && !fallbackWindow.closed) {
+            fallbackWindow.location.href = url;
+        } else if (isLikelyMobileBrowser()) {
+            window.open(url, "_blank", "noopener");
+        }
+
+        window.setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+    }, 250);
+}
+
 function getCanvasScale(sourceCanvas) {
     const poster = document.getElementById("poster");
     if (!poster) return 1;
@@ -1571,6 +2202,21 @@ function getElementCanvasBounds(element, sourceCanvas, padding = 0) {
     if (bottom <= top) return null;
 
     return { top, bottom };
+}
+
+function getElementCanvasColumns(element, sourceCanvas, padding = 0) {
+    const poster = document.getElementById("poster");
+    if (!poster || !element) return null;
+
+    const scale = getCanvasScale(sourceCanvas);
+    const posterRect = poster.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
+    const left = Math.max(0, Math.floor((rect.left - posterRect.left) * scale - padding));
+    const right = Math.min(sourceCanvas.width, Math.ceil((rect.right - posterRect.left) * scale + padding));
+
+    if (right <= left) return null;
+
+    return { left, right };
 }
 
 function getTextNodeCanvasRanges(element, sourceCanvas, padding) {
@@ -1625,11 +2271,10 @@ function mergeCanvasRanges(ranges) {
 
 function getProtectedTextRanges(sourceCanvas) {
     const scale = getCanvasScale(sourceCanvas);
-    const padding = Math.max(6, Math.round(8 * scale));
+    const textPadding = Math.max(2, Math.round(3 * scale));
     const textSelectors = [
         "#year",
         "#subtitle",
-        "#side",
         ".cardTitle",
         ".info"
     ];
@@ -1638,30 +2283,213 @@ function getProtectedTextRanges(sourceCanvas) {
         Array.from(document.querySelectorAll(selector))
             .filter((element) => window.getComputedStyle(element).display !== "none")
             .flatMap((element) => {
-                const textRanges = getTextNodeCanvasRanges(element, sourceCanvas, padding);
-                return textRanges.length ? textRanges : [getElementCanvasBounds(element, sourceCanvas, padding)].filter(Boolean);
+                const textRanges = getTextNodeCanvasRanges(element, sourceCanvas, textPadding);
+                return textRanges;
             })
     );
 
-    return mergeCanvasRanges(ranges);
+    return ranges
+        .filter((range) => range.bottom > range.top)
+        .sort((a, b) => a.top - b.top);
 }
 
 function isProtectedCutY(y, ranges) {
-    return ranges.some((range) => y >= range.top && y <= range.bottom);
+    return ranges.some((range) => y > range.top && y < range.bottom);
 }
 
-function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, protectedRanges) {
+function isProtectedCutBand(y, ranges, clearance) {
+    return ranges.some((range) => y + clearance > range.top && y - clearance < range.bottom);
+}
+
+function getCanvasPixelDistance(a, b) {
+    return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+}
+
+function mergeCanvasColumns(columns) {
+    return columns
+        .filter((column) => column.right > column.left)
+        .sort((a, b) => a.left - b.left)
+        .reduce((merged, column) => {
+            const last = merged[merged.length - 1];
+
+            if (!last || column.left > last.right) {
+                merged.push({ ...column });
+            } else {
+                last.right = Math.max(last.right, column.right);
+            }
+
+            return merged;
+        }, []);
+}
+
+function getTextScanColumns(sourceCanvas) {
+    const scale = getCanvasScale(sourceCanvas);
+    const padding = Math.max(3, Math.round(6 * scale));
+    const selectors = [
+        "#year",
+        "#subtitle",
+        ".cardTitle",
+        ".info"
+    ];
+    const columns = selectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector))
+            .filter((element) => window.getComputedStyle(element).display !== "none")
+            .map((element) => getElementCanvasColumns(element, sourceCanvas, padding))
+            .filter(Boolean)
+    );
+
+    return mergeCanvasColumns(columns.length ? columns : [{ left: 0, right: sourceCanvas.width }]);
+}
+
+function getCanvasBackgroundSample(sourceCanvas, ctx) {
+    const points = [
+        [0, 0],
+        [sourceCanvas.width - 1, 0],
+        [0, sourceCanvas.height - 1],
+        [sourceCanvas.width - 1, sourceCanvas.height - 1]
+    ];
+    const samples = [];
+
+    points.forEach(([x, y]) => {
+        try {
+            const pixel = ctx.getImageData(x, y, 1, 1).data;
+            samples.push([pixel[0], pixel[1], pixel[2]]);
+        } catch (error) {
+            // Canvas may be tainted by a remote asset; fall back to DOM-only cut checks.
+        }
+    });
+
+    if (!samples.length) return null;
+
+    return samples
+        .sort((a, b) => (
+            samples.filter((sample) => getCanvasPixelDistance(sample, a) < 18).length
+            - samples.filter((sample) => getCanvasPixelDistance(sample, b) < 18).length
+        ))
+        .at(-1);
+}
+
+function createCanvasInkDetector(sourceCanvas) {
+    const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+
+    const background = getCanvasBackgroundSample(sourceCanvas, ctx);
+    if (!background) return null;
+
+    const scanColumns = getTextScanColumns(sourceCanvas);
+    const rowCache = new Map();
+    const scannedWidth = scanColumns.reduce((total, column) => total + column.right - column.left, 0);
+    const minInkPixels = Math.max(3, Math.round(scannedWidth * 0.001));
+    const colorThreshold = 18;
+
+    return function hasInkAtRow(y) {
+        const rowY = Math.min(Math.max(Math.round(y), 0), sourceCanvas.height - 1);
+        if (rowCache.has(rowY)) return rowCache.get(rowY);
+
+        try {
+            let inkPixels = 0;
+
+            for (const column of scanColumns) {
+                const width = column.right - column.left;
+                const data = ctx.getImageData(column.left, rowY, width, 1).data;
+
+                for (let index = 0; index < data.length; index += 4) {
+                    const alpha = data[index + 3];
+                    if (alpha < 12) continue;
+
+                    const pixel = [data[index], data[index + 1], data[index + 2]];
+                    if (getCanvasPixelDistance(pixel, background) > colorThreshold) {
+                        inkPixels += 1;
+                        if (inkPixels >= minInkPixels) {
+                            rowCache.set(rowY, true);
+                            return true;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            rowCache.set(rowY, false);
+            return false;
+        }
+
+        rowCache.set(rowY, false);
+        return false;
+    };
+}
+
+function isCanvasInkCutBand(y, hasInkAtRow, clearance) {
+    if (!hasInkAtRow) return false;
+
+    for (let row = y - clearance; row <= y + clearance; row += 1) {
+        if (hasInkAtRow(row)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function isSafeBlankCutBand(y, protectedRanges, hasInkAtRow, clearance) {
+    if (hasInkAtRow) {
+        return !isCanvasInkCutBand(y, hasInkAtRow, clearance);
+    }
+
+    return !isProtectedCutBand(y, protectedRanges, clearance);
+}
+
+function getCutBacktrackLimit(scale, maxContentHeight) {
+    return Math.max(
+        Math.round(72 * scale),
+        Math.min(Math.round(240 * scale), Math.round(maxContentHeight * 0.18))
+    );
+}
+
+function findNearestSafeCutY(idealCutY, minCutY, protectedRanges, hasInkAtRow, clearance, maxBacktrack) {
+    const lowestCutY = Math.max(minCutY, Math.floor(idealCutY - maxBacktrack));
+
+    for (let y = Math.floor(idealCutY); y >= lowestCutY; y -= 1) {
+        if (isSafeBlankCutBand(y, protectedRanges, hasInkAtRow, clearance)) {
+            return y;
+        }
+    }
+
+    return null;
+}
+
+function getLineBoundaryFallbackCutY(idealCutY, minCutY, protectedRanges, clearance, maxBacktrack) {
+    const cutY = Math.floor(idealCutY);
+    const blockingRanges = protectedRanges.filter((range) => cutY + clearance > range.top && cutY - clearance < range.bottom);
+
+    if (!blockingRanges.length) return null;
+
+    const fallbackCutY = Math.floor(Math.min(...blockingRanges.map((range) => range.top)) - clearance);
+
+    if (fallbackCutY > minCutY && idealCutY - fallbackCutY <= maxBacktrack) {
+        return fallbackCutY;
+    }
+
+    return null;
+}
+
+function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, protectedRanges, hasInkAtRow) {
     const remainingHeight = sourceCanvas.height - sourceY;
     if (remainingHeight <= maxContentHeight) return remainingHeight;
 
     const scale = getCanvasScale(sourceCanvas);
     const idealCutY = sourceY + maxContentHeight;
-    const minCutY = sourceY + Math.max(Math.round(maxContentHeight * 0.48), Math.round(240 * scale));
+    const minCutY = sourceY + Math.max(1, Math.round(12 * scale));
+    const clearance = Math.max(4, Math.round(6 * scale));
+    const maxBacktrack = getCutBacktrackLimit(scale, maxContentHeight);
+    const safeCutY = findNearestSafeCutY(idealCutY, minCutY, protectedRanges, hasInkAtRow, clearance, maxBacktrack);
 
-    for (let y = Math.floor(idealCutY); y >= minCutY; y -= 1) {
-        if (!isProtectedCutY(y, protectedRanges)) {
-            return y - sourceY;
-        }
+    if (safeCutY !== null) {
+        return Math.max(1, safeCutY - sourceY);
+    }
+
+    const fallbackCutY = getLineBoundaryFallbackCutY(idealCutY, minCutY, protectedRanges, clearance, maxBacktrack);
+
+    if (fallbackCutY !== null) {
+        return Math.max(1, fallbackCutY - sourceY);
     }
 
     return maxContentHeight;
@@ -1705,7 +2533,7 @@ async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, to
         watermarkBandHeight
     );
 
-    const blob = await canvasToBlob(sliceCanvas, "image/jpeg", 0.95);
+    const blob = await canvasToBlob(sliceCanvas, "image/jpeg", 1);
     zip.file(`年度总结-${String(index).padStart(2, "0")}.jpg`, blob);
 }
 
@@ -1732,26 +2560,36 @@ async function exportSlicedImagesZip() {
             throw new Error("JSZip 加载失败，请检查网络后重试。");
         }
 
-        const sourceCanvas = await capturePosterCanvas({ hideCopyright: true });
         const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
-        const scale = sourceCanvas.width / (document.getElementById("poster")?.offsetWidth || sourceCanvas.width);
+        const poster = document.getElementById("poster");
+        const posterWidth = poster?.offsetWidth || resolution.width;
+        const exportScale = resolution.width / posterWidth;
+        let protectedRanges = [];
+        const sourceCanvas = await capturePosterCanvas({
+            hideCopyright: true,
+            scale: exportScale,
+            afterCapture: (canvas) => {
+                protectedRanges = getProtectedTextRanges(canvas);
+            }
+        });
+        const scale = sourceCanvas.width / posterWidth;
         const watermarkSettings = getWatermarkSettings(scale);
         const watermarkBandHeight = getWatermarkBandHeight(resolution, scale, watermarkSettings);
         const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
-        const sliceHeight = Math.round(sourceCanvas.width * (resolution.height / resolution.width));
+        const sliceHeight = resolution.height;
         const contentSliceHeight = Math.max(sliceHeight - topPaddingHeight - watermarkBandHeight, 1);
+        const hasInkAtRow = createCanvasInkDetector(sourceCanvas);
         const zip = new JSZip();
 
         let sourceY = 0;
         let index = 1;
-        const protectedRanges = getProtectedTextRanges(sourceCanvas);
 
         while (sourceY < sourceCanvas.height) {
             const remainingHeight = sourceCanvas.height - sourceY;
             const isLastSlice = remainingHeight <= contentSliceHeight;
             const currentContentHeight = isLastSlice
                 ? remainingHeight
-                : getSafeContentSliceHeight(sourceCanvas, sourceY, contentSliceHeight, protectedRanges);
+                : getSafeContentSliceHeight(sourceCanvas, sourceY, contentSliceHeight, protectedRanges, hasInkAtRow);
 
             await addSliceToZip(
                 zip,
@@ -1762,7 +2600,7 @@ async function exportSlicedImagesZip() {
                 topPaddingHeight,
                 watermarkBandHeight,
                 watermarkSettings,
-                isLastSlice ? null : sliceHeight
+                sliceHeight
             );
 
             sourceY += currentContentHeight;
@@ -1771,12 +2609,7 @@ async function exportSlicedImagesZip() {
 
         button.innerText = "正在打包...";
         const zipBlob = await zip.generateAsync({ type: "blob" });
-        const url = URL.createObjectURL(zipBlob);
-        const link = document.createElement("a");
-        link.download = "年度总结-已切图jpg.zip";
-        link.href = url;
-        link.click();
-        URL.revokeObjectURL(url);
+        downloadBlob(zipBlob, "年度总结-已切图jpg.zip");
     } catch (error) {
         window.alert(error?.message || "切图导出失败，请稍后再试。");
     } finally {
@@ -1827,8 +2660,8 @@ if (topPaddingInput) {
     topPaddingInput.value = String(topPadding);
 }
 
-if (fontSelect) {
-    renderFontSelectOptions();
+if (sideHeaderReserveInput) {
+    sideHeaderReserveInput.value = String(sideHeaderReserve);
 }
 
 render();

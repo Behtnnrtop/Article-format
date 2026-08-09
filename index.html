@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1.0">
-    <title>文手年度总结</title>
+    <title>长文排版</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,7 +15,7 @@
             <div id="subtitle">作者：</div>
             <div id="side">竖排标题</div>
             <div id="cards"></div>
-            <div id="copyright">制图：小红书@Behtnnrtop</div>
+            <div id="copyright">制图：@Behtnnrtop</div>
         </div>
     </div>
 
@@ -54,18 +54,6 @@
         </div>
 
         <div class="editItem">
-            <label for="fontSelect">字体</label>
-            <div class="fontControl">
-                <select id="fontSelect" class="fontSelect">
-                    <option value='"Microsoft YaHei",sans-serif'>默认字体</option>
-                    <option value='SimSun,"Songti SC","STSong",serif'>宋体</option>
-                </select>
-                <button id="loadFontsBtn" type="button">读取本机字体</button>
-            </div>
-            <div id="fontStatus" class="fontStatus"></div>
-        </div>
-
-        <div class="editItem">
             <label>字体颜色</label>
             <div id="textColorPalette" class="bgPalette"></div>
             <input type="color" id="textColorPicker" value="#111111" class="hiddenColorPicker">
@@ -88,6 +76,10 @@
                 <label for="topPaddingInput">
                     图片顶部预留
                     <input type="number" id="topPaddingInput" min="0" max="240" step="2" value="58">
+                </label>
+                <label for="sideHeaderReserveInput">
+                    竖排右侧预留
+                    <input type="number" id="sideHeaderReserveInput" min="0" max="240" step="2" value="0">
                 </label>
             </div>
         </div>
@@ -121,6 +113,11 @@
                 <span id="sideSizeValue" class="sizeValue"></span>
             </label>
             <textarea id="sideInput" rows="2">2025</textarea>
+        </div>
+
+        <div class="editItem fontLoaderPanel">
+            <button id="loadFontsBtn" type="button">读取本机字体</button>
+            <div id="fontStatus" class="fontStatus"></div>
         </div>
 
         <button id="addBtn" onclick="addCard()">＋ 新增段落</button>

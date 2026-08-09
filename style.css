@@ -56,10 +56,14 @@ body{
 }
 
 #subtitle{
-    margin-top:12px;
-    margin-left:calc(18px + var(--text-side-spacing,0px));
-    font-size:14px;
-    letter-spacing:.55em;
+    margin-top:var(--subtitle-gap-to-title,12px);
+    margin-left:calc(var(--subtitle-title-indent,18px) + var(--text-side-spacing,0px));
+    font-family:var(--subtitle-font-family,inherit);
+    font-size:var(--subtitle-font-size,14px);
+    font-weight:var(--subtitle-font-weight,400);
+    font-style:var(--subtitle-font-style,normal);
+    line-height:var(--subtitle-line-height,1.2);
+    letter-spacing:var(--subtitle-letter-spacing,.55em);
     color:var(--text-color,#3b3b3b);
     white-space:pre-wrap;
     overflow-wrap:anywhere;
@@ -69,22 +73,62 @@ body{
 #poster.subtitleVerticalLeft #subtitle{
     position:absolute;
     top:var(--subtitle-vertical-top,40px);
-    right:calc(var(--subtitle-vertical-right,86px) + var(--text-side-spacing,0px));
-    writing-mode:vertical-rl;
+    right:var(--subtitle-vertical-right,86px);
+    display:inline-flex;
+    flex-direction:row-reverse;
+    align-items:flex-end;
+    writing-mode:horizontal-tb;
     text-orientation:mixed;
 }
 
 #side{
     position:absolute;
     top:40px;
-    right:calc(50px + var(--text-side-spacing,0px));
-    writing-mode:vertical-rl;
+    right:calc(50px + var(--text-side-spacing,0px) + var(--side-header-reserve,0px));
+    display:inline-flex;
+    flex-direction:row-reverse;
+    align-items:flex-end;
+    writing-mode:horizontal-tb;
     font-size:48px;
     font-weight:bold;
     color:var(--text-color,#111111);
-    white-space:pre-wrap;
+    white-space:normal;
     overflow-wrap:anywhere;
     word-break:break-word;
+}
+
+.verticalTextLine{
+    display:inline-flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:flex-start;
+    gap:var(--vertical-text-letter-spacing,0px);
+    writing-mode:horizontal-tb;
+    text-orientation:mixed;
+    white-space:pre;
+}
+
+.verticalTextChar{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:1em;
+    height:1em;
+    line-height:1;
+    letter-spacing:0;
+}
+
+.rotateVerticalChar{
+    transform:rotate(90deg);
+    transform-origin:center center;
+}
+
+.adjustVerticalParenthesisChar{
+    position:relative;
+    left:var(--vertical-parenthesis-offset-x,0);
+    top:var(--vertical-parenthesis-offset-y,0);
+    --vertical-parenthesis-offset-x:0;
+    --vertical-parenthesis-offset-y:0;
 }
 
 #cards{
@@ -630,6 +674,11 @@ body{
     outline:none;
 }
 
+.blockFontSelect{
+    margin:4px 0 10px;
+    font-size:15px;
+}
+
 .fontControl button{
     flex:0 0 auto;
     margin:0;
@@ -643,6 +692,16 @@ body{
     color:#6b7280;
     font-size:12px;
     line-height:1.5;
+}
+
+.fontLoaderPanel{
+    margin-bottom:10px;
+}
+
+.fontLoaderPanel button{
+    width:100%;
+    margin:0;
+    padding:10px 12px;
 }
 
 .spacingControls{
@@ -813,10 +872,23 @@ button:hover{
     margin-bottom:10px;
 }
 
+.blockHeaderActions{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+    justify-content:flex-end;
+}
+
 .blockHeader h3{
     margin-bottom:0;
     font-size:16px;
     color:#1f2937;
+}
+
+.hiddenBlock{
+    border-color:#dbeafe;
+    background:#f8fbff;
 }
 
 .inlineLabel{
@@ -833,6 +905,12 @@ button:hover{
     color:#c62828;
     border-color:#f2c8c8;
     background:#fff7f7;
+}
+
+.hideBtn{
+    color:#2563eb;
+    border-color:#bfdbfe;
+    background:#eff6ff;
 }
 
 .block input,
@@ -868,6 +946,7 @@ button:hover{
     z-index:2;
     display:flex;
     align-items:center;
+    flex-wrap:wrap;
     gap:6px;
     margin:0;
     padding:7px 8px;
@@ -886,6 +965,17 @@ button:hover{
     border-radius:8px;
     font-size:14px;
     line-height:1;
+}
+
+.richTextFontSelect{
+    width:auto;
+    min-width:148px;
+    max-width:100%;
+    height:30px;
+    padding:4px 8px;
+    margin:0;
+    border-radius:8px;
+    font-size:13px;
 }
 
 .richTextEditor{
@@ -962,9 +1052,9 @@ button:hover{
     }
 
     #subtitle{
-        margin-top:10px;
-        margin-left:12px;
-        letter-spacing:.28em;
+        margin-top:var(--subtitle-gap-to-title,10px);
+        margin-left:calc(var(--subtitle-title-indent,12px) + var(--text-side-spacing,0px));
+        letter-spacing:var(--subtitle-letter-spacing,.28em);
     }
 
     #poster.subtitleVerticalLeft #subtitle{
@@ -973,7 +1063,7 @@ button:hover{
 
     #side{
         top:28px;
-        right:20px;
+        right:calc(20px + var(--text-side-spacing,0px) + var(--side-header-reserve,0px));
     }
 
     #cards{
