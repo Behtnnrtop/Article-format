@@ -6,9 +6,9 @@ const STORAGE_KEY = "article-summary-state";
 const STATE_SCHEMA_VERSION = 8;
 
 let globalFont = {
-    year: 40,
-    subtitle: 14,
-    side: 50
+    year: 78,  // 标题
+    subtitle: 42,  // 副标题
+    side: 128   //竖排
 };
 
 let backgroundColor = "#efefef";
@@ -110,16 +110,16 @@ let data = [
     {
         title: "一月",
         text: "Loading...",
-        titleSize: 48,
-        textSize: 18,
+        titleSize: 70,  // 段落标题
+        textSize: 48,   //段落内容
         lineSpacing: 1.8,
         paragraphSpacing: 0
     },
     {
         title: "二月",
         text: "Loading...",
-        titleSize: 48,
-        textSize: 18,
+        titleSize: 70,
+        textSize: 48,
         lineSpacing: 1.8,
         paragraphSpacing: 0
     }
@@ -1319,16 +1319,49 @@ function fixSideHeaderForExport(clonedDoc) {
     const clonedPoster = clonedDoc.getElementById("poster");
     if (side && !clonedPoster?.classList.contains("hideSideHeader")) {
         const sourceSide = document.getElementById("side");
-        const sourceStyle = sourceSide ? window.getComputedStyle(sourceSide) : null;
+        const sourcePoster = document.getElementById("poster");
 
-        side.style.writingMode = "horizontal-tb";
-        side.style.display = "block";
+        if (!sourceSide || !sourcePoster) return;
+
+        const sourceStyle = window.getComputedStyle(sourceSide);
+        const sourceRect = sourceSide.getBoundingClientRect();
+        const posterRect = sourcePoster.getBoundingClientRect();
+        const text = sourceSide.innerText || "";
+        const lines = text.split("\n");
+        const rotatedVerticalMarks = new Set(Array.from("【】（）()《》〈〉「」『』[]［］{}｛｝〔〕"));
+        const shouldRotateVerticalChar = (char) =>
+            rotatedVerticalMarks.has(char) || /^[A-Za-z0-9!-~]$/.test(char);
+
+        side.innerHTML = lines
+            .map((line) => {
+                const chars = Array.from(line || " ");
+                return `<span style="display:flex;flex-direction:column;align-items:center;">${chars
+                    .map((char) => {
+                        const rotateStyle = shouldRotateVerticalChar(char)
+                            ? "display:inline-block;transform:rotate(90deg);transform-origin:center center;"
+                            : "";
+                        return `<span style="${rotateStyle}">${escapeHtml(char)}</span>`;
+                    })
+                    .join("")}</span>`;
+            })
+            .join("");
+
         side.style.position = "absolute";
-        side.style.whiteSpace = "nowrap";
-        side.style.top = sourceStyle?.top || "40px";
-        side.style.right = sourceStyle?.right || "50px";
-        side.style.transform = "translateX(50%) rotate(90deg)";
-        side.style.transformOrigin = "center center";
+        side.style.top = `${sourceRect.top - posterRect.top}px`;
+        side.style.left = `${sourceRect.left - posterRect.left}px`;
+        side.style.right = "auto";
+        side.style.width = `${sourceRect.width}px`;
+        side.style.height = `${sourceRect.height}px`;
+        side.style.display = "flex";
+        side.style.flexDirection = "row-reverse";
+        side.style.alignItems = "flex-start";
+        side.style.justifyContent = "flex-start";
+        side.style.gap = sourceStyle.letterSpacing || "0";
+        side.style.writingMode = "horizontal-tb";
+        side.style.textOrientation = "mixed";
+        side.style.whiteSpace = "normal";
+        side.style.lineHeight = "1";
+        side.style.transform = "none";
     }
 }
 
