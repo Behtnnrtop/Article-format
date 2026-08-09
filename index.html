@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>文手年度总结</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="preview">
+        <div id="poster">
+            <div id="header">
+                <div id="year">文手年度总结</div>
+            </div>
+            <div id="subtitle">yearly summary</div>
+            <div id="side">2025</div>
+            <div id="cards"></div>
+            <div id="copyright">制图：小红书@Behtnnrtop</div>
+        </div>
+    </div>
+
+    <div id="dragBar"></div>
+
+    <div id="editor">
+        <div class="editorHeader">
+            <h2>编辑器</h2>
+            <div class="editorHeaderActions">
+                <button id="timelineToggleBtn" type="button" onclick="toggleTimeline()">隐藏时间轴</button>
+                <button id="monthTitleToggleBtn" type="button" onclick="toggleMonthTitles()">隐藏月份标题</button>
+                <button id="underlineToggleBtn" type="button" onclick="toggleMonthUnderlines()">隐藏横线</button>
+                <button id="sideHeaderToggleBtn" type="button" onclick="toggleSideHeader()">隐藏竖排版头</button>
+                <button id="phonePreviewToggleBtn" type="button" onclick="togglePhonePreview()">显示手机预览</button>
+            </div>
+        </div>
+
+        <div class="editItem phoneResolutionPanel">
+            <label for="phoneResolutionSelect">导出手机分辨率</label>
+            <select id="phoneResolutionSelect" class="phoneResolutionSelect">
+                <option value="1080x2376">1080 × 2376</option>
+                <option value="1170x2532">1170 × 2532</option>
+                <option value="1290x2796">1290 × 2796</option>
+                <option value="1080x2400">1080 × 2400</option>
+            </select>
+            <div class="resolutionHint">右侧手机预览会按当前分辨率实时渲染</div>
+        </div>
+
+        <button id="exportBtn" onclick="exportImage()">📲 导出长图JPG</button>
+        <button id="exportSlicesBtn" onclick="exportSlicedImagesZip()">导出已切图的JPG</button>
+
+        <div class="editItem">
+            <label>预设颜色</label>
+            <div id="bgPalette" class="bgPalette"></div>
+            <input type="color" id="customColorPicker" value="#efefef" class="hiddenColorPicker">
+        </div>
+
+        <div class="editItem">
+            <label for="fontSelect">字体</label>
+            <div class="fontControl">
+                <select id="fontSelect" class="fontSelect">
+                    <option value='"Microsoft YaHei",sans-serif'>默认字体</option>
+                    <option value='SimSun,"Songti SC","STSong",serif'>宋体</option>
+                </select>
+                <button id="loadFontsBtn" type="button">读取本机字体</button>
+            </div>
+            <div id="fontStatus" class="fontStatus"></div>
+        </div>
+
+        <div class="editItem">
+            <label>字体颜色</label>
+            <div id="textColorPalette" class="bgPalette"></div>
+            <input type="color" id="textColorPicker" value="#111111" class="hiddenColorPicker">
+        </div>
+
+        <div class="editItem">
+            <div class="spacingControls">
+                <label for="paragraphTitleSpacingInput">
+                    段落标题间距
+                    <input type="number" id="paragraphTitleSpacingInput" min="-40" max="80" step="1" value="0">
+                </label>
+                <label for="moduleSpacingInput">
+                    模块间距
+                    <input type="number" id="moduleSpacingInput" min="0" max="160" step="2" value="58">
+                </label>
+                <label for="topPaddingInput">
+                    图片顶部预留
+                    <input type="number" id="topPaddingInput" min="0" max="240" step="2" value="58">
+                </label>
+            </div>
+        </div>
+
+        <div class="editItem">
+            <label>
+                顶部标题
+                <button onclick="changeYearSize(-2)">A-</button>
+                <button onclick="changeYearSize(2)">A+</button>
+                <span id="yearSizeValue" class="sizeValue"></span>
+            </label>
+            <textarea id="yearInput" rows="2">文手年度总结</textarea>
+        </div>
+
+        <div class="editItem">
+            <label>
+                作者
+                <button onclick="changeSubtitleSize(-1)">A-</button>
+                <button onclick="changeSubtitleSize(1)">A+</button>
+                <button id="subtitlePositionToggleBtn" type="button" onclick="toggleSubtitlePosition()">竖排左侧</button>
+                <span id="subtitleSizeValue" class="sizeValue"></span>
+            </label>
+            <textarea id="subtitleInput" rows="2">yearly summary</textarea>
+        </div>
+
+        <div class="editItem">
+            <label>
+                右侧竖排版头
+                <button onclick="changeSideSize(-2)">A-</button>
+                <button onclick="changeSideSize(2)">A+</button>
+                <span id="sideSizeValue" class="sizeValue"></span>
+            </label>
+            <textarea id="sideInput" rows="2">2025</textarea>
+        </div>
+
+        <button id="addBtn" onclick="addCard()">＋ 新增段落</button>
+
+        <div id="cardEditor"></div>
+    </div>
+
+    <div id="phonePreviewPanel" class="phonePreviewPanel" hidden>
+        <div class="phonePreviewHeader">
+            <label>手机预览</label>
+            <div class="phonePreviewZoom">
+                <button type="button" title="缩小手机预览" onclick="changePhonePreviewScale(-0.1)">-</button>
+                <span id="phonePreviewScaleValue">100%</span>
+                <button type="button" title="放大手机预览" onclick="changePhonePreviewScale(0.1)">+</button>
+            </div>
+        </div>
+        <div class="phoneMockup">
+            <div id="phoneScreen" class="phoneScreen">
+                <div id="phoneTopPadding" class="phoneTopPadding"></div>
+                <div class="phoneStatusBar">
+                    <span>9:41</span>
+                    <span class="phoneStatusIcons">
+                        <span class="phoneSignal"></span>
+                        <span class="phoneWifi"></span>
+                        <span class="phoneBattery"></span>
+                    </span>
+                </div>
+                <div id="phoneCanvasWrap" class="phoneCanvasWrap">
+                    <div id="phoneCanvas" class="phoneCanvas"></div>
+                </div>
+                <div id="phoneWatermark" class="phoneWatermark"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
