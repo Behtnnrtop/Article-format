@@ -963,7 +963,7 @@ function renderEditor() {
                 <h3>第 ${index + 1} 段${item.hidden ? "（已隐藏）" : ""}</h3>
                 <div class="blockHeaderActions">
                     <button type="button" class="hideBtn" onclick="toggleCardHidden(${index})">${item.hidden ? "显示段落" : "隐藏段落"}</button>
-                    <button type="button" class="deleteBtn" onclick="deleteCard(${index})">删除作品</button>
+                    <button type="button" class="deleteBtn" onclick="deleteCard(${index})">删除段落</button>
                 </div>
             </div>
             <label class="inlineLabel">标题 <span class="sizeValue">${item.titleSize}px</span></label>
