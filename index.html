@@ -26,9 +26,9 @@
             <h2>编辑器</h2>
             <div class="editorHeaderActions">
                 <button id="timelineToggleBtn" type="button" onclick="toggleTimeline()">隐藏时间轴</button>
-                <button id="monthTitleToggleBtn" type="button" onclick="toggleMonthTitles()">隐藏月份标题</button>
-                <button id="underlineToggleBtn" type="button" onclick="toggleMonthUnderlines()">隐藏横线</button>
-                <button id="sideHeaderToggleBtn" type="button" onclick="toggleSideHeader()">隐藏竖排版头</button>
+                <button id="monthTitleToggleBtn" type="button" onclick="toggleMonthTitles()">隐藏段落标题</button>
+                <button id="underlineToggleBtn" type="button" onclick="toggleMonthUnderlines()">隐藏段落标题横线</button>
+                <button id="sideHeaderToggleBtn" type="button" onclick="toggleSideHeader()">隐藏竖排标题</button>
                 <button id="phonePreviewToggleBtn" type="button" onclick="togglePhonePreview()">显示手机预览</button>
             </div>
         </div>
@@ -41,14 +41,14 @@
                 <option value="1290x2796">1290 × 2796</option>
                 <option value="1080x2400">1080 × 2400</option>
             </select>
-            <div class="resolutionHint">右侧手机预览会按当前分辨率实时渲染</div>
+            <div class="resolutionHint">手机预览和切图导出会按当前分辨率实时渲染</div>
         </div>
 
         <button id="exportBtn" onclick="exportImage()">📲 导出长图JPG</button>
         <button id="exportSlicesBtn" onclick="exportSlicedImagesZip()">导出已切图的JPG</button>
 
         <div class="editItem">
-            <label>预设颜色</label>
+            <label>背景颜色</label>
             <div id="bgPalette" class="bgPalette"></div>
             <input type="color" id="customColorPicker" value="#efefef" class="hiddenColorPicker">
         </div>
@@ -78,7 +78,7 @@
                     <input type="number" id="topPaddingInput" min="0" max="240" step="2" value="58">
                 </label>
                 <label for="sideHeaderReserveInput">
-                    竖排右侧预留
+                    竖排标题右侧预留
                     <input type="number" id="sideHeaderReserveInput" min="0" max="240" step="2" value="0">
                 </label>
             </div>
@@ -107,7 +107,7 @@
 
         <div class="editItem">
             <label>
-                右侧竖排版头
+                右侧竖排标题
                 <button onclick="changeSideSize(-2)">A-</button>
                 <button onclick="changeSideSize(2)">A+</button>
                 <span id="sideSizeValue" class="sizeValue"></span>

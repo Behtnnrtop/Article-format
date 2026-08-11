@@ -1107,17 +1107,17 @@ function updateTimelineButtons() {
 
     const titleButton = document.getElementById("monthTitleToggleBtn");
     if (titleButton) {
-        titleButton.innerText = showMonthTitles ? "隐藏月份标题" : "显示月份标题";
+        titleButton.innerText = showMonthTitles ? "隐藏段落标题" : "显示段落标题";
     }
 
     const underlineButton = document.getElementById("underlineToggleBtn");
     if (underlineButton) {
-        underlineButton.innerText = showMonthUnderlines ? "隐藏横线" : "显示横线";
+        underlineButton.innerText = showMonthUnderlines ? "隐藏段落标题横线" : "显示段落标题横线";
     }
 
     const sideHeaderButton = document.getElementById("sideHeaderToggleBtn");
     if (sideHeaderButton) {
-        sideHeaderButton.innerText = showSideHeader ? "隐藏竖排版头" : "显示竖排版头";
+        sideHeaderButton.innerText = showSideHeader ? "隐藏竖排标题" : "显示竖排标题";
     }
 
     const subtitlePositionButton = document.getElementById("subtitlePositionToggleBtn");
