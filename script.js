@@ -739,8 +739,10 @@ function renderPreview() {
     const previewFontScale = getPreviewFontScale();
     const resolutionDesignScale = getResolutionDesignScale();
 
-    document.getElementById("year").innerText =
-        document.getElementById("yearInput").value;
+    const yearElement = document.getElementById("year");
+    const yearText = document.getElementById("yearInput").value;
+    yearElement.innerText = yearText;
+    yearElement.dataset.shadowText = yearText;
 
     renderVerticalTextTarget("side");
 

@@ -43,16 +43,51 @@ body{
 }
 
 #year{
+    /* --year-marker-height:80%;
+    --year-marker-width:100%;
+    --year-marker-bottom:-0.3em;
+    --year-marker-left:1.2em; */
+    --year-shadow-scale:1.5;
+    --year-shadow-left:-0.2em;
+    --year-shadow-top:0em;
     display:inline-block;
-    max-width:100%;
-    background:#000000;
-    color:#ffffff;
+    position:relative;
+    isolation:isolate;
+    color:#000000;
     font-size:56px;
     font-weight:bold;
-    padding:10px 20px;
+    line-height:1.05;
+    padding:10px 18px 10px;
     white-space:pre-wrap;
     word-break:break-all;
     overflow-wrap:anywhere;
+}
+
+#year::before{
+    content:attr(data-shadow-text);
+    position:absolute;
+    left:var(--year-shadow-left);
+    top:var(--year-shadow-top);
+    z-index:-1;
+    color:rgba(200,200,200,.3);
+    font-size:calc(1em * var(--year-shadow-scale));
+    line-height:1.05;
+    white-space:nowrap;
+    word-break:normal;
+    overflow-wrap:normal;
+    pointer-events:none;
+}
+
+#year::after{
+    content:"";
+    position:absolute;
+    left:var(--year-marker-left);
+    bottom:var(--year-marker-bottom);
+    z-index:-2;
+    width:var(--year-marker-width);
+    height:var(--year-marker-height);
+    background:#000000;
+    pointer-events:none;
 }
 
 #subtitle{
