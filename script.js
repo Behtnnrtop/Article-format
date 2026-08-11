@@ -220,7 +220,7 @@ const chineseFontLabels = new Map([
 
 let data = [
     {
-        title: "一月",
+        title: "段落一",
         text: "Loading...",
         titleSize: 70,  // 段落标题
         textSize: 48,   // 段落内容
@@ -232,7 +232,7 @@ let data = [
         paragraphSpacing: 0
     },
     {
-        title: "二月",
+        title: "段落二",
         text: "Loading...",
         titleSize: 70,
         textSize: 48,
@@ -565,9 +565,9 @@ function saveState() {
                 phoneResolution,
                 phonePreviewScale,
                 subtitlePosition,
-                yearTitle: document.getElementById("yearInput")?.value ?? "文手年度总结",
-                sideHeader: document.getElementById("sideInput")?.value ?? "2025",
-                subtitle: document.getElementById("subtitleInput")?.value ?? "yearly summary",
+                yearTitle: document.getElementById("yearInput")?.value ?? "输入标题",
+                sideHeader: document.getElementById("sideInput")?.value ?? "输入竖排标题",
+                subtitle: document.getElementById("subtitleInput")?.value ?? "作者：",
                 schemaVersion: STATE_SCHEMA_VERSION
             })
         );

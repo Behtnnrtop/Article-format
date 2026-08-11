@@ -26,7 +26,7 @@
 
 访问地址：
 ```text
-https://behtnnrtop.github.io/article-format/
+https://behtnnrtop.github.io/Article-format/
 ```
 
 ## License
