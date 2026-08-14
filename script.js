@@ -1295,6 +1295,10 @@ function buildTypesetLines(tokens, root, maxWidth, { strategy = TYPESET_ADJUST_S
 
                 if (isTypesetForbiddenLineStart(overflowingToken) || isTypesetForbiddenLineEnd(currentLastToken)) {
                     lineEnd += 1;
+
+                    while (lineEnd < end && isTypesetForbiddenLineStart(tokens[lineEnd])) {
+                        lineEnd += 1;
+                    }
                 }
             }
 
@@ -2543,8 +2547,24 @@ function changeSideSize(delta) {
     renderPreview();
 }
 
-function changeBackgroundColor(value) {
+function applyBackgroundColorPreview(value) {
     backgroundColor = value;
+
+    const poster = document.getElementById("poster");
+    if (poster) {
+        poster.style.backgroundColor = backgroundColor;
+    }
+}
+
+function commitBackgroundColorPreview() {
+    renderBackgroundPalette();
+    schedulePosterBackgroundSync(document.getElementById("poster"));
+    schedulePhonePreviewSync();
+    saveState();
+}
+
+function changeBackgroundColor(value) {
+    applyBackgroundColorPreview(value);
     renderBackgroundPalette();
     renderPreview();
 }
@@ -2642,8 +2662,34 @@ function changeCardTitleFont(index, value, selectEl = null) {
     renderPreview();
 }
 
-function changeTextColor(value) {
+function applyTextColorToElementTree(element) {
+    if (!element) return;
+
+    element.style.color = textColor;
+    element.querySelectorAll(".typesetLine, .typesetLineInner, .typesetToken, .verticalTextLine, .verticalTextChar").forEach((child) => {
+        child.style.color = textColor;
+    });
+}
+
+function applyTextColorPreview(value) {
     textColor = value;
+
+    const poster = document.getElementById("poster");
+    if (poster) {
+        poster.style.setProperty("--text-color", textColor);
+    }
+
+    document.querySelectorAll("#year, #subtitle, #side, .cardTitle, .info").forEach(applyTextColorToElementTree);
+}
+
+function commitTextColorPreview() {
+    renderTextColorPalette();
+    schedulePhonePreviewSync();
+    saveState();
+}
+
+function changeTextColor(value) {
+    applyTextColorPreview(value);
     renderTextColorPalette();
     renderPreview();
 }
@@ -2971,13 +3017,21 @@ if (subtitleInput) {
 
 if (textColorPicker) {
     textColorPicker.oninput = function () {
-        changeTextColor(this.value);
+        applyTextColorPreview(this.value);
+    };
+    textColorPicker.onchange = function () {
+        applyTextColorPreview(this.value);
+        commitTextColorPreview();
     };
 }
 
 if (customColorPicker) {
     customColorPicker.oninput = function () {
-        changeBackgroundColor(this.value);
+        applyBackgroundColorPreview(this.value);
+    };
+    customColorPicker.onchange = function () {
+        applyBackgroundColorPreview(this.value);
+        commitBackgroundColorPreview();
     };
 }
 
