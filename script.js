@@ -1711,6 +1711,42 @@ function scheduleDeferredFullPreviewRender(delay = PREVIEW_RENDER_DELAY_MS) {
     schedulePreviewRender(delay, () => renderPreview({ deferTypesetting: true }));
 }
 
+function renderHeaderInputPreview() {
+    cancelDeferredPosterTypesetting();
+
+    const previewFontScale = getPreviewFontScale();
+    const yearElement = document.getElementById("year");
+    const yearInput = document.getElementById("yearInput");
+    const subtitleElement = document.getElementById("subtitle");
+    const sideElement = document.getElementById("side");
+
+    if (yearElement && yearInput) {
+        const yearText = yearInput.value;
+        yearElement.classList.remove("typesetText");
+        yearElement.innerText = yearText;
+        yearElement.dataset.shadowText = yearText;
+        yearElement.style.fontFamily = resolveYearFontFamily();
+        yearElement.style.color = textColor;
+        yearElement.style.fontSize = globalFont.year * previewFontScale + "px";
+    }
+
+    if (subtitleElement) {
+        subtitleElement.classList.remove("typesetText");
+        subtitleElement.style.fontFamily = resolveSubtitleFontFamily();
+        subtitleElement.style.color = textColor;
+        applySubtitleSettings(subtitleElement, previewFontScale);
+        renderVerticalTextTarget("subtitle");
+    }
+
+    if (sideElement) {
+        sideElement.style.fontFamily = resolveSideFontFamily();
+        sideElement.style.fontSize = globalFont.side * previewFontScale + "px";
+        renderVerticalTextTarget("side");
+    }
+
+    schedulePreviewRender(PREVIEW_RENDER_DELAY_MS, () => renderPreview({ deferTypesetting: true }));
+}
+
 function renderAuxiliaryControls() {
     renderBackgroundPalette();
     renderBackgroundImageControls();
@@ -2755,7 +2791,7 @@ function changeSideHeaderReserve(value) {
 }
 
 function changeSubtitle(value) {
-    renderPreview();
+    renderHeaderInputPreview();
 }
 
 function toggleTimeline() {
@@ -3005,11 +3041,11 @@ document.addEventListener("mousemove", function (e) {
 
 document.getElementById("yearInput").oninput = function () {
     autoResizeTextarea(this);
-    renderPreview();
+    renderHeaderInputPreview();
 };
 document.getElementById("sideInput").oninput = function () {
     autoResizeTextarea(this);
-    renderPreview();
+    renderHeaderInputPreview();
 };
 
 if (subtitleInput) {
