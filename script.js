@@ -1707,6 +1707,10 @@ function scheduleCardPreviewRender(index) {
     schedulePreviewRender(PREVIEW_RENDER_DELAY_MS, flushPendingCardPreviewRenders);
 }
 
+function scheduleDeferredFullPreviewRender(delay = PREVIEW_RENDER_DELAY_MS) {
+    schedulePreviewRender(delay, () => renderPreview({ deferTypesetting: true }));
+}
+
 function renderAuxiliaryControls() {
     renderBackgroundPalette();
     renderBackgroundImageControls();
@@ -2531,7 +2535,7 @@ function changeTextSize(index, delta) {
 
 function changeYearSize(delta) {
     globalFont.year += delta;
-    renderPreview();
+    scheduleDeferredFullPreviewRender();
 }
 
 function changeSubtitleSize(delta) {
@@ -2539,12 +2543,12 @@ function changeSubtitleSize(delta) {
     if (globalFont.subtitle < 6) {
         globalFont.subtitle = 6;
     }
-    renderPreview();
+    scheduleDeferredFullPreviewRender();
 }
 
 function changeSideSize(delta) {
     globalFont.side += delta;
-    renderPreview();
+    scheduleDeferredFullPreviewRender();
 }
 
 function applyBackgroundColorPreview(value) {
@@ -2699,7 +2703,7 @@ function changeLineSpacing(index, value) {
     if (!data[index] || Number.isNaN(nextValue)) return;
 
     data[index].lineSpacing = Math.min(Math.max(nextValue, 1), 3);
-    renderPreview();
+    scheduleCardPreviewRender(index);
 }
 
 function changeParagraphSpacing(index, value) {
@@ -2707,7 +2711,7 @@ function changeParagraphSpacing(index, value) {
     if (!data[index] || Number.isNaN(nextValue)) return;
 
     data[index].paragraphSpacing = Math.min(Math.max(nextValue, 0), 80);
-    renderPreview();
+    scheduleCardPreviewRender(index);
 }
 
 function changeSideSpacing(value) {
@@ -2715,7 +2719,7 @@ function changeSideSpacing(value) {
     if (Number.isNaN(nextValue)) return;
 
     sideSpacing = Math.min(Math.max(nextValue, -120), 240);
-    renderPreview();
+    scheduleDeferredFullPreviewRender();
 }
 
 function changeParagraphTitleSpacing(value) {
@@ -2723,7 +2727,7 @@ function changeParagraphTitleSpacing(value) {
     if (Number.isNaN(nextValue)) return;
 
     paragraphTitleSpacing = Math.min(Math.max(nextValue, -40), 80);
-    renderPreview();
+    scheduleDeferredFullPreviewRender();
 }
 
 function changeModuleSpacing(value) {
@@ -2731,7 +2735,7 @@ function changeModuleSpacing(value) {
     if (Number.isNaN(nextValue)) return;
 
     moduleSpacing = Math.min(Math.max(nextValue, 0), 160);
-    renderPreview();
+    scheduleDeferredFullPreviewRender();
 }
 
 function changeTopPadding(value) {
@@ -2739,7 +2743,7 @@ function changeTopPadding(value) {
     if (Number.isNaN(nextValue)) return;
 
     topPadding = Math.min(Math.max(nextValue, 0), 240);
-    renderPreview();
+    scheduleDeferredFullPreviewRender();
 }
 
 function changeSideHeaderReserve(value) {
@@ -2747,7 +2751,7 @@ function changeSideHeaderReserve(value) {
     if (Number.isNaN(nextValue)) return;
 
     sideHeaderReserve = Math.min(Math.max(nextValue, 0), 240);
-    renderPreview();
+    scheduleDeferredFullPreviewRender();
 }
 
 function changeSubtitle(value) {
