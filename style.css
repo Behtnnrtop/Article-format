@@ -261,9 +261,9 @@ body{
 }
 
 #poster.noTimeline .card{
-    width:calc(100% - 18px);
+    width:calc(100%);
     padding-left:0;
-    margin-left:18px;
+    margin-left:0px;
     margin-top:max(0px, calc(var(--module-spacing,58px) - 18px));
 }
 
