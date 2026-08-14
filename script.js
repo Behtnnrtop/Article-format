@@ -3,7 +3,7 @@
 =========================== */
 
 const STORAGE_KEY = "article-summary-state";
-const STATE_SCHEMA_VERSION = 10;
+const STATE_SCHEMA_VERSION = 12;
 
 let globalFont = {
     year: 78,  // 标题
@@ -12,10 +12,16 @@ let globalFont = {
 };
 
 let backgroundColor = "#efefef";
+let backgroundImageDataUrl = "";
+let backgroundImageName = "";
+let backgroundImageBlendEdge = 0;
 let textColor = "#111111";
 let fontFamily = '"Microsoft YaHei",sans-serif';
 const CARD_TITLE_DEFAULT_FONT_FAMILY = '"Songti SC","STSong","SimSun",serif';
 const INHERIT_FONT_VALUE = "__inherit__";
+let yearFontFamily = INHERIT_FONT_VALUE;
+let subtitleFontFamily = INHERIT_FONT_VALUE;
+let sideFontFamily = INHERIT_FONT_VALUE;
 let lineSpacing = 1.8;
 let paragraphSpacing = 0;
 let sideSpacing = 0;
@@ -27,6 +33,7 @@ let showTimeline = true;
 let showMonthTitles = true;
 let showMonthUnderlines = true;
 let showSideHeader = true;
+let showBottomWatermark = true;
 let showPhonePreview = false;
 let phoneResolution = "1080x2376";
 let phonePreviewScale = 1;
@@ -35,6 +42,8 @@ const MAX_PREVIEW_FONT_SCALE = 0.42;
 const MIN_PREVIEW_FONT_SCALE = 0.32;
 const BASE_COPYRIGHT_FONT_SIZE = 13;
 const BASE_RESOLUTION_WIDTH = 1080;
+const MAX_BACKGROUND_IMAGE_FILE_SIZE = 6 * 1024 * 1024;
+const MAX_BACKGROUND_IMAGE_BLEND_EDGE = 0;
 const SUBTITLE_SETTINGS = Object.freeze({
     fontFamily: "inherit",
     fontWeight: "400",
@@ -153,6 +162,7 @@ const presetColors = [
 ];
 
 const customColorPicker = document.getElementById("customColorPicker");
+const backgroundImageInput = document.getElementById("backgroundImageInput");
 const textColorPicker = document.getElementById("textColorPicker");
 const subtitleInput = document.getElementById("subtitleInput");
 const sideSpacingInput = document.getElementById("sideSpacingInput");
@@ -246,7 +256,15 @@ let data = [
 ];
 
 let editorWidth = null;
+let editorCollapsed = false;
 let phonePreviewFrame = null;
+let isInitializing = true;
+let editorRenderFrame = null;
+let backgroundImageCanvasCache = {
+    src: "",
+    promise: null,
+    image: null
+};
 const richTextSelections = new Map();
 
 function loadState() {
@@ -269,12 +287,40 @@ function loadState() {
             editorWidth = state.editorWidth;
         }
 
+        if (typeof state.editorCollapsed === "boolean") {
+            editorCollapsed = state.editorCollapsed;
+        }
+
         if (typeof state.backgroundColor === "string") {
             backgroundColor = state.backgroundColor;
         }
 
+        if (typeof state.backgroundImageDataUrl === "string") {
+            backgroundImageDataUrl = state.backgroundImageDataUrl;
+        }
+
+        if (typeof state.backgroundImageName === "string") {
+            backgroundImageName = state.backgroundImageName;
+        }
+
+        if (typeof state.backgroundImageBlendEdge === "number") {
+            backgroundImageBlendEdge = Math.min(Math.max(state.backgroundImageBlendEdge, 0), MAX_BACKGROUND_IMAGE_BLEND_EDGE);
+        }
+
         if (typeof state.textColor === "string") {
             textColor = state.textColor;
+        }
+
+        if (typeof state.yearFontFamily === "string") {
+            yearFontFamily = state.yearFontFamily;
+        }
+
+        if (typeof state.subtitleFontFamily === "string") {
+            subtitleFontFamily = state.subtitleFontFamily;
+        }
+
+        if (typeof state.sideFontFamily === "string") {
+            sideFontFamily = state.sideFontFamily;
         }
 
         if (typeof state.lineSpacing === "number") {
@@ -347,6 +393,9 @@ function loadState() {
         }
         if (typeof state.showSideHeader === "boolean") {
             showSideHeader = state.showSideHeader;
+        }
+        if (typeof state.showBottomWatermark === "boolean") {
+            showBottomWatermark = state.showBottomWatermark;
         }
         if (typeof state.showPhonePreview === "boolean") {
             showPhonePreview = state.showPhonePreview;
@@ -491,6 +540,110 @@ function renderPreviewBlock(element) {
     return `<div${className}>${element.innerHTML || "<br>"}</div>`;
 }
 
+function ensurePosterBackgroundCanvas(poster) {
+    if (!poster) return null;
+
+    let canvas = poster.querySelector(".posterBackgroundCanvas");
+    if (!canvas) {
+        canvas = document.createElement("canvas");
+        canvas.className = "posterBackgroundCanvas";
+        canvas.setAttribute("aria-hidden", "true");
+        poster.prepend(canvas);
+    }
+
+    return canvas;
+}
+
+async function syncPosterBackgroundCanvas(poster) {
+    const canvas = ensurePosterBackgroundCanvas(poster);
+    if (!canvas) return;
+
+    if (!backgroundImageDataUrl) {
+        canvas.hidden = true;
+        canvas.style.height = "";
+        return;
+    }
+
+    const width = Math.max(1, Math.round(poster.offsetWidth || poster.getBoundingClientRect().width || 0));
+    const posterRect = poster.getBoundingClientRect();
+    const minBottom = posterRect.top + (poster.clientHeight || posterRect.height || 0);
+    const naturalBottom = Array.from(poster.children)
+        .filter((child) => child !== canvas && !child.hidden)
+        .reduce((bottom, child) => {
+            const rect = child.getBoundingClientRect();
+            return Math.max(bottom, rect.bottom);
+        }, minBottom);
+    const height = Math.max(1, Math.round(naturalBottom - posterRect.top));
+
+    canvas.hidden = false;
+    canvas.width = width;
+    canvas.height = height;
+    canvas.style.height = `${height}px`;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    await drawFullSliceBackground(ctx, width, height);
+}
+
+function schedulePosterBackgroundSync(poster = document.getElementById("poster")) {
+    if (!poster) return;
+
+    if (posterBackgroundSyncFrame !== null) {
+        cancelAnimationFrame(posterBackgroundSyncFrame);
+    }
+
+    posterBackgroundSyncFrame = requestAnimationFrame(() => {
+        posterBackgroundSyncFrame = null;
+        syncPosterBackgroundCanvas(poster);
+    });
+}
+
+function syncPreviewExportActionsPosition() {
+    const preview = document.getElementById("preview");
+    if (!preview) return;
+
+    const previewRect = preview.getBoundingClientRect();
+    const rightInset = Math.max(18, Math.round(window.innerWidth - previewRect.right + 18));
+    document.documentElement.style.setProperty("--preview-actions-right", `${rightInset}px`);
+}
+
+function ensurePhoneBackgroundCanvas(screen) {
+    if (!screen) return null;
+
+    let canvas = screen.querySelector(".phoneBackgroundCanvas");
+    if (!canvas) {
+        canvas = document.createElement("canvas");
+        canvas.className = "phoneBackgroundCanvas";
+        canvas.setAttribute("aria-hidden", "true");
+        screen.prepend(canvas);
+    }
+
+    return canvas;
+}
+
+async function syncPhoneBackgroundCanvas(screen, resolution = null) {
+    const canvas = ensurePhoneBackgroundCanvas(screen);
+    if (!canvas) return;
+
+    if (!backgroundImageDataUrl) {
+        canvas.hidden = true;
+        return;
+    }
+
+    const width = Math.max(1, Math.round(resolution?.width || screen.clientWidth || screen.getBoundingClientRect().width || 0));
+    const height = Math.max(1, Math.round(resolution?.height || screen.clientHeight || screen.getBoundingClientRect().height || 0));
+
+    canvas.hidden = false;
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    await drawFullSliceBackground(ctx, width, height);
+}
+
 function getItemLineSpacing(item) {
     return typeof item.lineSpacing === "number" ? item.lineSpacing : lineSpacing;
 }
@@ -533,6 +686,708 @@ function renderRichTextPreview(value) {
         .join("");
 }
 
+const TYPESET_ADJUST_STRATEGY = "spacing";
+const TYPESET_FORBIDDEN_LINE_START = new Set(Array.from("，。、：；！？)]｝】）》〉」』”’\"':;/?"));
+const TYPESET_FORBIDDEN_LINE_END = new Set(Array.from("([{｛【（《〈「『“‘\"'"));
+const TYPESET_MAX_SCALE_SQUEEZE = 0.96;
+const TYPESET_MIN_SPACING_SQUEEZE = -1.8;
+const TYPESET_MAX_JUSTIFY_SPACING = 8;
+const TYPESET_MIN_JUSTIFY_FILL_RATIO = 0.72;
+const SUBTITLE_MIN_SINGLE_LINE_SPACING = -18;
+const SUBTITLE_MIN_SINGLE_LINE_SCALE = 0.82;
+const PREVIEW_RENDER_DELAY_MS = 180;
+const DIVIDER_DRAG_RENDER_DELAY_MS = 160;
+const STARTUP_TYPESET_IDLE_TIMEOUT_MS = 700;
+const TYPESETTING_OVERLAY_DELAY_MS = 0;
+const TYPESETTING_OVERLAY_MIN_VISIBLE_MS = 0;
+const STATE_SAVE_DEBOUNCE_MS = 350;
+
+let typesetMeasureLayer = null;
+let pendingPreviewRenderTimer = null;
+let pendingPreviewRenderCallback = null;
+const pendingCardPreviewIndexes = new Set();
+let pendingPosterTypesetTask = null;
+let pendingTypesettingOverlayTimer = null;
+let pendingTypesettingOverlayHideTimer = null;
+let typesettingOverlayShownAt = 0;
+let posterTypesettingOverlay = null;
+let posterBackgroundSyncFrame = null;
+let pendingStateSaveTimer = null;
+let lastSavedStateJson = "";
+let typesetMeasureCanvasContext = null;
+
+function getTypesetMeasureLayer() {
+    if (typesetMeasureLayer && document.body.contains(typesetMeasureLayer)) {
+        return typesetMeasureLayer;
+    }
+
+    typesetMeasureLayer = document.createElement("div");
+    typesetMeasureLayer.id = "typesetMeasureLayer";
+    typesetMeasureLayer.style.position = "fixed";
+    typesetMeasureLayer.style.left = "-99999px";
+    typesetMeasureLayer.style.top = "0";
+    typesetMeasureLayer.style.visibility = "hidden";
+    typesetMeasureLayer.style.pointerEvents = "none";
+    typesetMeasureLayer.style.whiteSpace = "nowrap";
+    document.body.appendChild(typesetMeasureLayer);
+
+    return typesetMeasureLayer;
+}
+
+function copyTypesetTextStyles(source, target) {
+    const style = window.getComputedStyle(source);
+    [
+        "fontFamily",
+        "fontSize",
+        "fontWeight",
+        "fontStyle",
+        "fontVariant",
+        "fontStretch",
+        "letterSpacing",
+        "textTransform",
+        "textDecorationLine",
+        "textDecorationStyle",
+        "textDecorationColor",
+        "color",
+        "lineHeight"
+    ].forEach((property) => {
+        target.style[property] = style[property];
+    });
+}
+
+function getTypesetTokenStyle(element, root) {
+    const style = window.getComputedStyle(element.nodeType === Node.ELEMENT_NODE ? element : root);
+    return {
+        fontFamily: style.fontFamily,
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        fontStyle: style.fontStyle,
+        fontVariant: style.fontVariant,
+        fontStretch: style.fontStretch,
+        letterSpacing: style.letterSpacing,
+        textDecorationLine: style.textDecorationLine,
+        textDecorationStyle: style.textDecorationStyle,
+        textDecorationColor: style.textDecorationColor,
+        color: style.color
+    };
+}
+
+function applyTypesetTokenStyle(element, style) {
+    Object.entries(style).forEach(([property, value]) => {
+        if (value) {
+            element.style[property] = value;
+        }
+    });
+}
+
+function collectTypesetTokens(root, node = root, tokens = []) {
+    if (node.nodeType === Node.TEXT_NODE) {
+        const style = getTypesetTokenStyle(node.parentElement || root, root);
+        Array.from(node.textContent || "").forEach((char) => {
+            if (char === "\r") return;
+            tokens.push(char === "\n"
+                ? { break: true }
+                : { text: char, style });
+        });
+        return tokens;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) {
+        return tokens;
+    }
+
+    if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "BR") {
+        tokens.push({ break: true });
+        return tokens;
+    }
+
+    Array.from(node.childNodes).forEach((child) => collectTypesetTokens(root, child, tokens));
+    return tokens;
+}
+
+function createTypesetLineElement(tokens, adjustment = null) {
+    const line = document.createElement("span");
+    const inner = document.createElement("span");
+    line.className = "typesetLine";
+    inner.className = "typesetLineInner";
+
+    if (adjustment?.type === "scale") {
+        inner.style.transform = `scaleX(${adjustment.scale})`;
+    }
+
+    tokens.forEach((token, index) => {
+        const span = document.createElement("span");
+        span.className = "typesetToken";
+        span.textContent = token.text === " " ? "\u00a0" : token.text;
+        applyTypesetTokenStyle(span, token.style);
+
+        if (adjustment?.type === "spacing" && index < tokens.length - 1 && isTypesetSpacingTarget(token)) {
+            span.style.marginRight = `${adjustment.spacing}px`;
+        }
+
+        inner.appendChild(span);
+    });
+
+    if (!tokens.length) {
+        inner.appendChild(document.createElement("br"));
+    }
+
+    line.appendChild(inner);
+    return line;
+}
+
+function measureTypesetTokens(tokens, root) {
+    if (!tokens.length) return 0;
+
+    const layer = getTypesetMeasureLayer();
+    const line = createTypesetLineElement(tokens);
+    copyTypesetTextStyles(root, line);
+    layer.innerHTML = "";
+    layer.appendChild(line);
+
+    const width = line.firstElementChild.getBoundingClientRect().width;
+    layer.innerHTML = "";
+    return width;
+}
+
+function getTypesetMeasureCanvasContext() {
+    if (typesetMeasureCanvasContext) {
+        return typesetMeasureCanvasContext;
+    }
+
+    const canvas = document.createElement("canvas");
+    typesetMeasureCanvasContext = canvas.getContext("2d");
+    return typesetMeasureCanvasContext;
+}
+
+function getTypesetCanvasFont(style) {
+    return [
+        style.fontStyle || "normal",
+        style.fontWeight || "400",
+        style.fontSize || "16px",
+        style.fontFamily || "sans-serif"
+    ].join(" ");
+}
+
+function getTypesetLetterSpacing(style) {
+    const value = parseFloat(style?.letterSpacing || "0");
+    return Number.isFinite(value) ? value : 0;
+}
+
+function createFastTypesetRangeMeasurer(tokens, root) {
+    const ctx = getTypesetMeasureCanvasContext();
+    if (!ctx) return null;
+
+    const rootStyle = window.getComputedStyle(root);
+    const widthPrefix = new Array(tokens.length + 1).fill(0);
+    const spacingPrefix = new Array(tokens.length + 1).fill(0);
+    const widthCache = new Map();
+
+    tokens.forEach((token, index) => {
+        if (!token?.text) {
+            widthPrefix[index + 1] = widthPrefix[index];
+            spacingPrefix[index + 1] = spacingPrefix[index];
+            return;
+        }
+
+        const style = token.style || rootStyle;
+        const font = getTypesetCanvasFont(style);
+        const cacheKey = `${font}\n${token.text}`;
+
+        if (!widthCache.has(cacheKey)) {
+            ctx.font = font;
+            widthCache.set(cacheKey, ctx.measureText(token.text).width);
+        }
+
+        widthPrefix[index + 1] = widthPrefix[index] + widthCache.get(cacheKey);
+        spacingPrefix[index + 1] = spacingPrefix[index] + getTypesetLetterSpacing(style);
+    });
+
+    return function measureRange(start, end) {
+        if (end <= start) return 0;
+
+        const textWidth = widthPrefix[end] - widthPrefix[start];
+        const spacingWidth = end - start > 1
+            ? spacingPrefix[end - 1] - spacingPrefix[start]
+            : 0;
+
+        return textWidth + spacingWidth;
+    };
+}
+
+function createTypesetRangeMeasurer(tokens, root) {
+    if (tokens.length > 160) {
+        const fastMeasurer = createFastTypesetRangeMeasurer(tokens, root);
+        if (fastMeasurer) return fastMeasurer;
+    }
+
+    const cache = new Map();
+
+    return function measureRange(start, end) {
+        if (end <= start) return 0;
+
+        const key = `${start}:${end}`;
+        if (cache.has(key)) {
+            return cache.get(key);
+        }
+
+        const width = measureTypesetTokens(tokens.slice(start, end), root);
+        cache.set(key, width);
+        return width;
+    };
+}
+
+function cancelPendingPreviewRender() {
+    if (pendingPreviewRenderTimer === null) return;
+
+    window.clearTimeout(pendingPreviewRenderTimer);
+    pendingPreviewRenderTimer = null;
+    pendingPreviewRenderCallback = null;
+}
+
+function schedulePreviewRender(delay = PREVIEW_RENDER_DELAY_MS, renderCallback = renderPreview) {
+    cancelPendingPreviewRender();
+    pendingPreviewRenderCallback = renderCallback;
+
+    pendingPreviewRenderTimer = window.setTimeout(() => {
+        const callback = pendingPreviewRenderCallback || renderPreview;
+        pendingPreviewRenderTimer = null;
+        pendingPreviewRenderCallback = null;
+        callback();
+    }, delay);
+}
+
+async function flushPendingPreviewRender() {
+    if (pendingPreviewRenderTimer === null) return;
+
+    const callback = pendingPreviewRenderCallback || renderPreview;
+    cancelPendingPreviewRender();
+    await callback();
+}
+
+function getPosterTypesettingOverlay() {
+    if (posterTypesettingOverlay && document.body.contains(posterTypesettingOverlay)) {
+        return posterTypesettingOverlay;
+    }
+
+    const preview = document.getElementById("preview");
+    if (!preview) return null;
+
+    posterTypesettingOverlay = document.getElementById("posterTypesettingOverlay");
+
+    if (!posterTypesettingOverlay) {
+        posterTypesettingOverlay = document.createElement("div");
+        posterTypesettingOverlay.id = "posterTypesettingOverlay";
+        posterTypesettingOverlay.className = "posterTypesettingOverlay";
+        posterTypesettingOverlay.innerHTML = '<div class="posterTypesettingMessage">正在排版...</div>';
+        preview.appendChild(posterTypesettingOverlay);
+    }
+
+    return posterTypesettingOverlay;
+}
+
+function showTypesettingOverlayNow(message = "正在排版...") {
+    cancelPendingTypesettingOverlayHide();
+
+    const overlay = getPosterTypesettingOverlay();
+    if (!overlay) return;
+
+    const messageElement = overlay.querySelector(".posterTypesettingMessage");
+    if (messageElement) {
+        messageElement.textContent = message;
+    }
+
+    overlay.classList.add("visible");
+    overlay.setAttribute("aria-hidden", "false");
+    typesettingOverlayShownAt = performance.now();
+}
+
+function cancelPendingTypesettingOverlay() {
+    if (pendingTypesettingOverlayTimer === null) return;
+
+    window.clearTimeout(pendingTypesettingOverlayTimer);
+    pendingTypesettingOverlayTimer = null;
+}
+
+function cancelPendingTypesettingOverlayHide() {
+    if (pendingTypesettingOverlayHideTimer === null) return;
+
+    window.clearTimeout(pendingTypesettingOverlayHideTimer);
+    pendingTypesettingOverlayHideTimer = null;
+}
+
+function scheduleTypesettingOverlay(message = "正在排版...") {
+    cancelPendingTypesettingOverlay();
+    cancelPendingTypesettingOverlayHide();
+
+    pendingTypesettingOverlayTimer = window.setTimeout(() => {
+        pendingTypesettingOverlayTimer = null;
+        showTypesettingOverlayNow(message);
+    }, TYPESETTING_OVERLAY_DELAY_MS);
+}
+
+function hideTypesettingOverlay() {
+    cancelPendingTypesettingOverlay();
+    cancelPendingTypesettingOverlayHide();
+
+    const overlay = getPosterTypesettingOverlay();
+    if (!overlay) return;
+
+    if (overlay.classList.contains("visible")) {
+        const visibleFor = performance.now() - typesettingOverlayShownAt;
+        const remaining = TYPESETTING_OVERLAY_MIN_VISIBLE_MS - visibleFor;
+
+        if (remaining > 0) {
+            pendingTypesettingOverlayHideTimer = window.setTimeout(() => {
+                pendingTypesettingOverlayHideTimer = null;
+                hideTypesettingOverlay();
+            }, remaining);
+            return;
+        }
+    }
+
+    overlay.classList.remove("visible");
+    overlay.setAttribute("aria-hidden", "true");
+    typesettingOverlayShownAt = 0;
+}
+
+async function runPosterTypesettingCompletion({ shouldSave = true, hideOverlay = true } = {}) {
+    pendingPosterTypesetTask = null;
+    applyPosterTypesetting();
+    syncCardsOffset();
+    syncPreviewExportActionsPosition();
+    schedulePhonePreviewSync();
+
+    await syncPosterBackgroundCanvas(document.getElementById("poster"));
+
+    if (hideOverlay) {
+        hideTypesettingOverlay();
+    }
+
+    if (shouldSave) {
+        saveState();
+    }
+}
+
+function cancelDeferredPosterTypesetting() {
+    if (!pendingPosterTypesetTask) return;
+
+    if (pendingPosterTypesetTask.type === "idle" && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(pendingPosterTypesetTask.id);
+    } else {
+        window.clearTimeout(pendingPosterTypesetTask.id);
+    }
+
+    pendingPosterTypesetTask = null;
+}
+
+function scheduleDeferredPosterTypesetting(options = {}) {
+    cancelDeferredPosterTypesetting();
+
+    if (typeof window.requestIdleCallback === "function") {
+        const id = window.requestIdleCallback(() => {
+            runPosterTypesettingCompletion(options);
+        }, { timeout: STARTUP_TYPESET_IDLE_TIMEOUT_MS });
+        pendingPosterTypesetTask = { type: "idle", id, options };
+        return;
+    }
+
+    const id = window.setTimeout(() => {
+        runPosterTypesettingCompletion(options);
+    }, 0);
+    pendingPosterTypesetTask = { type: "timeout", id, options };
+}
+
+async function flushDeferredPosterTypesetting() {
+    if (!pendingPosterTypesetTask) return;
+
+    const { options } = pendingPosterTypesetTask;
+    cancelDeferredPosterTypesetting();
+    await runPosterTypesettingCompletion({
+        ...options,
+        hideOverlay: true
+    });
+}
+
+function getTypesetAvailableWidth(element) {
+    const style = window.getComputedStyle(element);
+    const padding = parseFloat(style.paddingLeft || "0") + parseFloat(style.paddingRight || "0");
+    const ownWidth = element.getBoundingClientRect().width - padding;
+    const parentWidth = element.parentElement
+        ? element.parentElement.getBoundingClientRect().width - padding
+        : ownWidth;
+
+    return Math.max(1, Math.min(ownWidth || parentWidth, parentWidth || ownWidth));
+}
+
+function syncHeadlineTextWidths() {
+    const poster = document.getElementById("poster");
+    const side = document.getElementById("side");
+    const subtitle = document.getElementById("subtitle");
+    if (!poster) return;
+
+    const posterStyle = window.getComputedStyle(poster);
+    const paddingLeft = parseFloat(posterStyle.paddingLeft || "0");
+    const paddingRight = parseFloat(posterStyle.paddingRight || "0");
+    const contentWidth = Math.max(1, poster.clientWidth - paddingLeft - paddingRight);
+    let rightLimit = contentWidth - sideSpacing;
+
+    if (showSideHeader && side && window.getComputedStyle(side).display !== "none") {
+        const posterRect = poster.getBoundingClientRect();
+        const sideRect = side.getBoundingClientRect();
+        const sideLeftInContent = sideRect.left - posterRect.left - paddingLeft;
+        rightLimit = sideLeftInContent - sideSpacing;
+    }
+
+    const titleMaxWidth = Math.max(1, rightLimit - sideSpacing);
+    poster.style.setProperty("--headline-title-max-width", `${titleMaxWidth}px`);
+
+    if (subtitlePosition === "verticalLeft" || !subtitle) {
+        poster.style.removeProperty("--headline-subtitle-max-width");
+        return;
+    }
+
+    const subtitleMarginLeft = parseFloat(window.getComputedStyle(subtitle).marginLeft || "0");
+    const subtitleMaxWidth = Math.max(1, rightLimit - subtitleMarginLeft);
+    poster.style.setProperty("--headline-subtitle-max-width", `${subtitleMaxWidth}px`);
+}
+
+function isTypesetForbiddenLineStart(token) {
+    return token?.text && TYPESET_FORBIDDEN_LINE_START.has(token.text);
+}
+
+function isTypesetForbiddenLineEnd(token) {
+    return token?.text && TYPESET_FORBIDDEN_LINE_END.has(token.text);
+}
+
+function isTypesetSpacingTarget(token) {
+    return token?.text && !/\s/.test(token.text);
+}
+
+function getTypesetSpacingTargetCount(tokens) {
+    return Math.max(0, tokens.slice(0, -1).filter(isTypesetSpacingTarget).length);
+}
+
+function adjustTypesetLine(tokens, width, maxWidth, strategy = TYPESET_ADJUST_STRATEGY) {
+    if (width <= maxWidth) return null;
+
+    if (strategy === "spacing") {
+        const adjustableCount = getTypesetSpacingTargetCount(tokens);
+        if (adjustableCount > 0) {
+            const spacing = Math.max((maxWidth - width) / adjustableCount, TYPESET_MIN_SPACING_SQUEEZE);
+            if (width + spacing * adjustableCount <= maxWidth + 1) {
+                return { type: "spacing", spacing };
+            }
+        }
+    }
+
+    const scale = Math.max(maxWidth / width, TYPESET_MAX_SCALE_SQUEEZE);
+    return { type: "scale", scale };
+}
+
+function getSingleLineAdjustment(tokens, width, maxWidth, { minSpacing = TYPESET_MIN_SPACING_SQUEEZE, minScale = TYPESET_MAX_SCALE_SQUEEZE } = {}) {
+    if (width <= maxWidth) return null;
+
+    const adjustableCount = getTypesetSpacingTargetCount(tokens);
+    if (adjustableCount > 0) {
+        const spacing = (maxWidth - width) / adjustableCount;
+        if (spacing >= minSpacing) {
+            return { type: "spacing", spacing };
+        }
+    }
+
+    const scale = maxWidth / width;
+    if (scale >= minScale) {
+        return { type: "scale", scale };
+    }
+
+    return false;
+}
+
+function getJustifyTypesetLineAdjustment(line, maxWidth) {
+    if (!line || line.adjustment || line.forcedBreakAfter || line.width <= 0 || line.width >= maxWidth) return null;
+    if (line.width / maxWidth < TYPESET_MIN_JUSTIFY_FILL_RATIO) return null;
+
+    const adjustableCount = getTypesetSpacingTargetCount(line.tokens);
+    if (adjustableCount <= 0) return null;
+
+    const spacing = (maxWidth - line.width) / adjustableCount;
+    if (spacing <= 0 || spacing > TYPESET_MAX_JUSTIFY_SPACING) return null;
+
+    return { type: "spacing", spacing };
+}
+
+function justifyTypesetLines(lines, maxWidth) {
+    lines.forEach((line, index) => {
+        if (index === lines.length - 1) return;
+
+        const adjustment = getJustifyTypesetLineAdjustment(line, maxWidth);
+        if (adjustment) {
+            line.adjustment = adjustment;
+        }
+    });
+
+    return lines;
+}
+
+function getTypesetSegmentFitEnd(tokens, start, end, maxWidth, measureRange) {
+    if (start >= end) return start;
+    if (measureRange(start, end) <= maxWidth) return end;
+
+    let low = start + 1;
+    let high = end;
+    let fitEnd = start + 1;
+
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const width = measureRange(start, mid);
+
+        if (width <= maxWidth) {
+            fitEnd = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    return fitEnd;
+}
+
+function buildTypesetLines(tokens, root, maxWidth, { strategy = TYPESET_ADJUST_STRATEGY, justify = false } = {}) {
+    const lines = [];
+    let segmentStart = null;
+    const measureRange = createTypesetRangeMeasurer(tokens, root);
+
+    function pushLine(start, end, { forcedBreakAfter = false } = {}) {
+        const lineTokens = tokens.slice(start, end);
+        const width = measureRange(start, end);
+        lines.push({
+            tokens: lineTokens,
+            width,
+            adjustment: adjustTypesetLine(lineTokens, width, maxWidth, strategy),
+            forcedBreakAfter
+        });
+    }
+
+    function pushEmptyLine({ forcedBreakAfter = false } = {}) {
+        lines.push({
+            tokens: [],
+            width: 0,
+            adjustment: null,
+            forcedBreakAfter
+        });
+    }
+
+    function pushSegment(start, end, { forcedBreakAfter = false } = {}) {
+        if (start === null || end <= start) {
+            pushEmptyLine({ forcedBreakAfter });
+            return;
+        }
+
+        let lineStart = start;
+
+        while (lineStart < end) {
+            let lineEnd = getTypesetSegmentFitEnd(tokens, lineStart, end, maxWidth, measureRange);
+
+            if (lineEnd < end && lineEnd > lineStart) {
+                const overflowingToken = tokens[lineEnd];
+                const currentLastToken = tokens[lineEnd - 1];
+
+                if (isTypesetForbiddenLineStart(overflowingToken) || isTypesetForbiddenLineEnd(currentLastToken)) {
+                    lineEnd += 1;
+                }
+            }
+
+            if (lineEnd <= lineStart) {
+                lineEnd = lineStart + 1;
+            }
+
+            pushLine(lineStart, lineEnd, { forcedBreakAfter: forcedBreakAfter && lineEnd >= end });
+            lineStart = lineEnd;
+        }
+    }
+
+    tokens.forEach((token, index) => {
+        if (token.break) {
+            pushSegment(segmentStart, index, { forcedBreakAfter: true });
+            segmentStart = null;
+            return;
+        }
+
+        if (segmentStart === null) {
+            segmentStart = index;
+        }
+    });
+
+    if (segmentStart !== null || !lines.length) {
+        pushSegment(segmentStart, tokens.length);
+    }
+
+    return justify ? justifyTypesetLines(lines, maxWidth) : lines;
+}
+
+function typesetTextElement(element, { strategy = TYPESET_ADJUST_STRATEGY, justify = false } = {}) {
+    if (!element || !element.textContent.trim()) return;
+
+    const tokens = collectTypesetTokens(element);
+    const maxWidth = getTypesetAvailableWidth(element);
+    const lines = buildTypesetLines(tokens, element, maxWidth, { strategy, justify });
+    const fragment = document.createDocumentFragment();
+
+    lines.forEach((line) => {
+        fragment.appendChild(createTypesetLineElement(line.tokens, line.adjustment));
+    });
+
+    element.innerHTML = "";
+    element.classList.add("typesetText");
+    element.appendChild(fragment);
+}
+
+function typesetSingleLineFirstElement(element, options = {}) {
+    if (!element || !element.textContent.trim()) return;
+
+    const tokens = collectTypesetTokens(element);
+    if (tokens.some((token) => token.break)) {
+        typesetTextElement(element, options);
+        return;
+    }
+
+    const maxWidth = getTypesetAvailableWidth(element);
+    const width = measureTypesetTokens(tokens, element);
+    const adjustment = getSingleLineAdjustment(tokens, width, maxWidth, options);
+
+    if (adjustment === false) {
+        typesetTextElement(element, options);
+        return;
+    }
+
+    element.innerHTML = "";
+    element.classList.add("typesetText");
+    element.appendChild(createTypesetLineElement(tokens, adjustment));
+}
+
+function applyPosterTypesetting() {
+    typesetTextElement(document.getElementById("year"));
+
+    if (subtitlePosition !== "verticalLeft") {
+        typesetSingleLineFirstElement(document.getElementById("subtitle"), {
+            minSpacing: SUBTITLE_MIN_SINGLE_LINE_SPACING,
+            minScale: SUBTITLE_MIN_SINGLE_LINE_SCALE
+        });
+    }
+
+    document.querySelectorAll(".card").forEach(applyCardTypesetting);
+}
+
+function applyCardTypesetting(card) {
+    if (!card) return;
+
+    card.querySelectorAll(".cardTitle").forEach((element) => typesetTextElement(element));
+    card.querySelectorAll(".info > div, .info > p").forEach((element) => {
+        typesetTextElement(element, { justify: !element.classList.contains("contentHeading") });
+    });
+}
+
 function autoResizeTextarea(element) {
     if (!element) return;
 
@@ -540,40 +1395,82 @@ function autoResizeTextarea(element) {
     element.style.height = `${element.scrollHeight}px`;
 }
 
-function saveState() {
+function buildPersistedState() {
+    return {
+        globalFont,
+        data,
+        editorWidth,
+        editorCollapsed,
+        backgroundColor,
+        backgroundImageDataUrl,
+        backgroundImageName,
+        backgroundImageBlendEdge,
+        textColor,
+        yearFontFamily,
+        subtitleFontFamily,
+        sideFontFamily,
+        lineSpacing,
+        paragraphSpacing,
+        sideSpacing,
+        paragraphTitleSpacing,
+        moduleSpacing,
+        topPadding,
+        sideHeaderReserve,
+        showTimeline,
+        showMonthTitles,
+        showMonthUnderlines,
+        showSideHeader,
+        showBottomWatermark,
+        showPhonePreview,
+        phoneResolution,
+        phonePreviewScale,
+        subtitlePosition,
+        yearTitle: document.getElementById("yearInput")?.value ?? "输入标题",
+        sideHeader: document.getElementById("sideInput")?.value ?? "输入竖排标题",
+        subtitle: document.getElementById("subtitleInput")?.value ?? "作者：",
+        schemaVersion: STATE_SCHEMA_VERSION
+    };
+}
+
+function commitStateSave() {
+    if (isInitializing) return;
+
     try {
-        localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify({
-                globalFont,
-                data,
-                editorWidth,
-                backgroundColor,
-                textColor,
-                lineSpacing,
-                paragraphSpacing,
-                sideSpacing,
-                paragraphTitleSpacing,
-                moduleSpacing,
-                topPadding,
-                sideHeaderReserve,
-                showTimeline,
-                showMonthTitles,
-                showMonthUnderlines,
-                showSideHeader,
-                showPhonePreview,
-                phoneResolution,
-                phonePreviewScale,
-                subtitlePosition,
-                yearTitle: document.getElementById("yearInput")?.value ?? "输入标题",
-                sideHeader: document.getElementById("sideInput")?.value ?? "输入竖排标题",
-                subtitle: document.getElementById("subtitleInput")?.value ?? "作者：",
-                schemaVersion: STATE_SCHEMA_VERSION
-            })
-        );
+        const json = JSON.stringify(buildPersistedState());
+        if (json === lastSavedStateJson) return;
+
+        localStorage.setItem(STORAGE_KEY, json);
+        lastSavedStateJson = json;
     } catch (error) {
         // Ignore storage quota or availability issues.
     }
+}
+
+function saveState({ immediate = false } = {}) {
+    if (isInitializing) return;
+
+    if (pendingStateSaveTimer !== null) {
+        window.clearTimeout(pendingStateSaveTimer);
+        pendingStateSaveTimer = null;
+    }
+
+    if (immediate) {
+        commitStateSave();
+        return;
+    }
+
+    pendingStateSaveTimer = window.setTimeout(() => {
+        pendingStateSaveTimer = null;
+        commitStateSave();
+    }, STATE_SAVE_DEBOUNCE_MS);
+}
+
+function flushPendingStateSave() {
+    if (pendingStateSaveTimer === null) return;
+
+    window.clearTimeout(pendingStateSaveTimer);
+    pendingStateSaveTimer = null;
+    commitStateSave();
 }
 
 function quoteCssFontFamily(value) {
@@ -604,6 +1501,9 @@ function getPrimaryFontFamily(value) {
 function getAllowedFontFamilyValues() {
     return [
         fontFamily,
+        yearFontFamily,
+        subtitleFontFamily,
+        sideFontFamily,
         CARD_TITLE_DEFAULT_FONT_FAMILY,
         ...fontOptions.map((option) => option.value)
     ];
@@ -635,6 +1535,22 @@ function getFontDisplayLabel(family, fullNames = []) {
 
 function resolveCardTitleFontFamily(item) {
     return item?.titleFontFamily || CARD_TITLE_DEFAULT_FONT_FAMILY;
+}
+
+function resolvePosterTextFontFamily(value) {
+    return value && value !== INHERIT_FONT_VALUE ? value : fontFamily;
+}
+
+function resolveYearFontFamily() {
+    return resolvePosterTextFontFamily(yearFontFamily);
+}
+
+function resolveSubtitleFontFamily() {
+    return resolvePosterTextFontFamily(subtitleFontFamily);
+}
+
+function resolveSideFontFamily() {
+    return resolvePosterTextFontFamily(sideFontFamily);
 }
 
 function resolveCardContentFontFamily(item) {
@@ -733,7 +1649,71 @@ async function loadSystemFonts() {
    Render
 =========================== */
 
-function renderPreview() {
+function renderPreviewCard(item, index, previewFontScale = getPreviewFontScale()) {
+    const titleText = escapeHtml(item.title);
+    const textHtml = renderRichTextPreview(item.text);
+    const itemLineSpacing = getItemLineSpacing(item);
+    const itemParagraphSpacing = getItemParagraphSpacing(item);
+
+    return `
+        <div class="card" data-card-index="${index}">
+            <div class="cardTitle" style="font-size:${item.titleSize * previewFontScale}px;font-family:${escapeHtml(resolveCardTitleFontFamily(item))};">${titleText}</div>
+            <div class="cardContent">
+                <div class="info" style="font-size:${item.textSize * previewFontScale}px;font-family:${escapeHtml(resolveCardContentFontFamily(item))};--content-line-height:${itemLineSpacing};--content-paragraph-spacing:${itemParagraphSpacing}px;">${textHtml}</div>
+            </div>
+        </div>
+        `;
+}
+
+function renderPreviewCardByIndex(index) {
+    const item = data[index];
+    const existingCard = document.querySelector(`#cards .card[data-card-index="${index}"]`);
+
+    if (!item || item.hidden || !existingCard) {
+        renderPreview();
+        return;
+    }
+
+    const template = document.createElement("template");
+    template.innerHTML = renderPreviewCard(item, index).trim();
+    const nextCard = template.content.firstElementChild;
+
+    if (!nextCard) {
+        renderPreview();
+        return;
+    }
+
+    existingCard.replaceWith(nextCard);
+    applyCardTypesetting(nextCard);
+    syncCardsOffset();
+    schedulePhonePreviewSync();
+    schedulePosterBackgroundSync(document.getElementById("poster"));
+    saveState();
+}
+
+function flushPendingCardPreviewRenders() {
+    const indexes = Array.from(pendingCardPreviewIndexes);
+    pendingCardPreviewIndexes.clear();
+
+    indexes.forEach(renderPreviewCardByIndex);
+}
+
+function scheduleCardPreviewRender(index) {
+    pendingCardPreviewIndexes.add(index);
+    schedulePreviewRender(PREVIEW_RENDER_DELAY_MS, flushPendingCardPreviewRenders);
+}
+
+function renderAuxiliaryControls() {
+    renderBackgroundPalette();
+    renderBackgroundImageControls();
+    renderTextColorPalette();
+    updateTimelineButtons();
+}
+
+async function renderPreview({ updateControls = false, shouldSave = true, deferTypesetting = false, hideOverlayWhenReady = false, scheduleDeferredTypesetting = true } = {}) {
+    cancelDeferredPosterTypesetting();
+    cancelPendingPreviewRender();
+    pendingCardPreviewIndexes.clear();
     applyResponsiveViewport();
 
     const previewFontScale = getPreviewFontScale();
@@ -743,14 +1723,17 @@ function renderPreview() {
     const yearText = document.getElementById("yearInput").value;
     yearElement.innerText = yearText;
     yearElement.dataset.shadowText = yearText;
+    yearElement.style.fontFamily = resolveYearFontFamily();
+    yearElement.style.color = textColor;
+
+    const sideElement = document.getElementById("side");
+    sideElement.style.fontFamily = resolveSideFontFamily();
+    sideElement.style.fontSize = globalFont.side * previewFontScale + "px";
 
     renderVerticalTextTarget("side");
 
     document.getElementById("year").style.fontSize =
         globalFont.year * previewFontScale + "px";
-
-    document.getElementById("side").style.fontSize =
-        globalFont.side * previewFontScale + "px";
 
     const yearSizeValue = document.getElementById("yearSizeValue");
     if (yearSizeValue) {
@@ -769,7 +1752,12 @@ function renderPreview() {
 
     const poster = document.getElementById("poster");
     if (poster) {
+        ensurePosterBackgroundCanvas(poster);
         poster.style.backgroundColor = backgroundColor;
+        poster.style.backgroundImage = "";
+        poster.style.backgroundSize = "";
+        poster.style.backgroundPosition = "";
+        poster.style.backgroundRepeat = "";
         poster.style.fontFamily = fontFamily;
         poster.style.setProperty("--text-color", textColor);
         poster.style.setProperty("--text-side-spacing", `${sideSpacing}px`);
@@ -783,39 +1771,49 @@ function renderPreview() {
         poster.classList.toggle("subtitleVerticalLeft", subtitlePosition === "verticalLeft");
     }
 
+    const subtitleElement = document.getElementById("subtitle");
+    if (subtitleElement) {
+        const subtitleText = subtitleInput?.value ?? subtitleElement.innerText;
+        subtitleElement.classList.remove("typesetText");
+        subtitleElement.innerText = subtitleText;
+        subtitleElement.style.fontFamily = resolveSubtitleFontFamily();
+        subtitleElement.style.color = textColor;
+        applySubtitleSettings(subtitleElement, previewFontScale);
+    }
+
     renderVerticalTextTarget("subtitle");
+    syncHeadlineTextWidths();
 
     const copyrightEl = document.getElementById("copyright");
     if (copyrightEl) {
         copyrightEl.style.fontSize = `${BASE_COPYRIGHT_FONT_SIZE * resolutionDesignScale}px`;
+        copyrightEl.style.display = showBottomWatermark ? "" : "none";
     }
 
     let html = "";
 
-    data.forEach((item) => {
+    data.forEach((item, index) => {
         if (item.hidden) return;
 
-        const titleText = escapeHtml(item.title);
-        const textHtml = renderRichTextPreview(item.text);
-        const itemLineSpacing = getItemLineSpacing(item);
-        const itemParagraphSpacing = getItemParagraphSpacing(item);
-
-        html += `
-        <div class="card">
-            <div class="cardTitle" style="font-size:${item.titleSize * previewFontScale}px;font-family:${escapeHtml(resolveCardTitleFontFamily(item))};">${titleText}</div>
-            <div class="cardContent">
-                <div class="info" style="font-size:${item.textSize * previewFontScale}px;font-family:${escapeHtml(resolveCardContentFontFamily(item))};--content-line-height:${itemLineSpacing};--content-paragraph-spacing:${itemParagraphSpacing}px;">${textHtml}</div>
-            </div>
-        </div>
-        `;
+        html += renderPreviewCard(item, index, previewFontScale);
     });
 
     document.getElementById("cards").innerHTML = html;
 
+    if (deferTypesetting) {
+        if (scheduleDeferredTypesetting) {
+            scheduleDeferredPosterTypesetting({ shouldSave });
+        }
+    } else {
+        applyPosterTypesetting();
+    }
+
     syncCardsOffset();
 
     if (subtitlePosition === "verticalLeft") {
-        requestAnimationFrame(syncCardsOffset);
+        requestAnimationFrame(() => {
+            syncCardsOffset();
+        });
     }
 
     if (subtitleInput) {
@@ -845,11 +1843,29 @@ function renderPreview() {
         sideHeaderReserveInput.value = String(sideHeaderReserve);
     }
 
-    renderBackgroundPalette();
-    renderTextColorPalette();
-    updateTimelineButtons();
-    syncPhonePreview();
-    saveState();
+    if (updateControls) {
+        renderAuxiliaryControls();
+    }
+
+    syncPreviewExportActionsPosition();
+    if (!deferTypesetting) {
+        schedulePhonePreviewSync();
+    }
+
+    if (hideOverlayWhenReady) {
+        await syncPosterBackgroundCanvas(poster);
+        hideTypesettingOverlay();
+    } else {
+        schedulePosterBackgroundSync(poster);
+    }
+
+    if (!deferTypesetting && !hideOverlayWhenReady) {
+        hideTypesettingOverlay();
+    }
+
+    if (shouldSave) {
+        saveState();
+    }
 }
 
 function syncCardsOffset() {
@@ -937,12 +1953,37 @@ function getElementTextBounds(element) {
     });
 }
 
-function render() {
-    renderPreview();
+function scheduleEditorRender() {
+    if (editorRenderFrame !== null) {
+        cancelAnimationFrame(editorRenderFrame);
+    }
+
+    editorRenderFrame = requestAnimationFrame(() => {
+        editorRenderFrame = null;
+        renderEditor();
+    });
+}
+
+function render({ deferEditor = false, previewOptions = {} } = {}) {
+    renderPreview(previewOptions);
+
+    if (deferEditor) {
+        scheduleEditorRender();
+        return;
+    }
+
+    if (editorRenderFrame !== null) {
+        cancelAnimationFrame(editorRenderFrame);
+        editorRenderFrame = null;
+    }
+
     renderEditor();
 }
 
 function renderEditor() {
+    richTextSelections.clear();
+    renderHeadlineFontControls();
+
     let html = "";
 
     data.forEach((item, index) => {
@@ -968,14 +2009,14 @@ function renderEditor() {
                     <button type="button" class="deleteBtn" onclick="deleteCard(${index})">删除段落</button>
                 </div>
             </div>
-            <label class="inlineLabel">标题 <span class="sizeValue">${item.titleSize}px</span></label>
+            <label class="inlineLabel">标题 <span class="sizeValue" data-card-index="${index}" data-size-type="title">${item.titleSize}px</span></label>
             <button onclick="changeTitleSize(${index},-2)">A-</button>
             <button onclick="changeTitleSize(${index},2)">A+</button>
             <select class="fontSelect blockFontSelect" style="font-family:${escapeHtml(titleFontFamily)};" onchange="changeCardTitleFont(${index},this.value,this)">
                 ${titleFontOptions}
             </select>
             <textarea rows="2" style="font-family:${escapeHtml(titleFontFamily)};" oninput="autoResizeTextarea(this);changeTitle(${index},this.value)">${titleText}</textarea>
-            <label class="inlineLabel">内容 <span class="sizeValue">${item.textSize}px</span></label>
+            <label class="inlineLabel">内容 <span class="sizeValue" data-card-index="${index}" data-size-type="text">${item.textSize}px</span></label>
             <button onclick="changeTextSize(${index},-2)">A-</button>
             <button onclick="changeTextSize(${index},2)">A+</button>
             <div class="blockSpacingControls">
@@ -1022,6 +2063,49 @@ function renderEditor() {
     document.querySelectorAll("#cardEditor textarea").forEach(autoResizeTextarea);
 }
 
+function renderHeadlineFontControls() {
+    const controls = [
+        {
+            selectId: "yearFontSelect",
+            inputId: "yearInput",
+            selectedValue: yearFontFamily,
+            resolvedFontFamily: resolveYearFontFamily(),
+            defaultLabel: "默认标题字体"
+        },
+        {
+            selectId: "subtitleFontSelect",
+            inputId: "subtitleInput",
+            selectedValue: subtitleFontFamily,
+            resolvedFontFamily: resolveSubtitleFontFamily(),
+            defaultLabel: "默认副标题字体"
+        },
+        {
+            selectId: "sideFontSelect",
+            inputId: "sideInput",
+            selectedValue: sideFontFamily,
+            resolvedFontFamily: resolveSideFontFamily(),
+            defaultLabel: "默认竖排标题字体"
+        }
+    ];
+
+    controls.forEach((control) => {
+        const selectEl = document.getElementById(control.selectId);
+        const inputEl = document.getElementById(control.inputId);
+
+        if (selectEl) {
+            selectEl.innerHTML = renderFontOptionElements(control.selectedValue, [
+                { label: control.defaultLabel, value: INHERIT_FONT_VALUE }
+            ]);
+            selectEl.value = control.selectedValue;
+            selectEl.style.fontFamily = control.resolvedFontFamily;
+        }
+
+        if (inputEl) {
+            inputEl.style.fontFamily = control.resolvedFontFamily;
+        }
+    });
+}
+
 function renderBackgroundPalette() {
     const palette = document.getElementById("bgPalette");
     if (!palette) return;
@@ -1055,6 +2139,27 @@ function renderBackgroundPalette() {
 
     if (customColorPicker && customColorPicker.value !== backgroundColor) {
         customColorPicker.value = backgroundColor;
+    }
+}
+
+function renderBackgroundImageControls() {
+    const status = document.getElementById("backgroundImageStatus");
+    const preview = document.getElementById("backgroundImagePreview");
+    const removeButton = document.getElementById("removeBackgroundImageBtn");
+
+    if (status) {
+        status.innerText = backgroundImageDataUrl
+            ? `已上传：${backgroundImageName || "背景图片"}，镜像平铺`
+            : "未上传背景图片";
+    }
+
+    if (preview) {
+        preview.hidden = !backgroundImageDataUrl;
+        preview.style.backgroundImage = backgroundImageDataUrl ? `url("${backgroundImageDataUrl}")` : "";
+    }
+
+    if (removeButton) {
+        removeButton.disabled = !backgroundImageDataUrl;
     }
 }
 
@@ -1105,6 +2210,11 @@ function updateTimelineButtons() {
     const timelineButton = document.getElementById("timelineToggleBtn");
     if (timelineButton) {
         timelineButton.innerText = showTimeline ? "隐藏时间轴" : "显示时间轴";
+    }
+
+    const watermarkButton = document.getElementById("bottomWatermarkToggleBtn");
+    if (watermarkButton) {
+        watermarkButton.innerText = showBottomWatermark ? "隐藏底部水印" : "显示底部水印";
     }
 
     const titleButton = document.getElementById("monthTitleToggleBtn");
@@ -1162,11 +2272,14 @@ function syncPhonePreview() {
     const imageWidth = poster.offsetWidth || resolution.width;
     const watermarkSettings = getWatermarkSettings(1);
     const topPaddingHeight = getExportTopPaddingHeight(resolution, 1);
-    const watermarkBandHeight = getWatermarkBandHeight(resolution, 1, watermarkSettings);
+    const watermarkBandHeight = showBottomWatermark
+        ? getWatermarkBandHeight(resolution, 1, watermarkSettings)
+        : topPaddingHeight;
     const clone = poster.cloneNode(true);
     const posterStyle = window.getComputedStyle(poster);
 
     screen.style.aspectRatio = `${resolution.width} / ${resolution.height}`;
+    screen.style.backgroundColor = posterStyle.backgroundColor || backgroundColor;
     panel.style.setProperty("--phone-preview-scale", phonePreviewScale);
     if (mockup) {
         mockup.style.setProperty("--phone-preview-scale", phonePreviewScale);
@@ -1177,7 +2290,13 @@ function syncPhonePreview() {
 
     clone.classList.add("phonePosterClone");
     clone.style.width = `${imageWidth}px`;
-    clone.style.minHeight = `${Math.max(poster.scrollHeight, poster.offsetHeight, resolution.height)}px`;
+    clone.style.minHeight = "0";
+    clone.style.backgroundColor = "transparent";
+
+    const clonedBackgroundCanvas = clone.querySelector(".posterBackgroundCanvas");
+    if (clonedBackgroundCanvas) {
+        clonedBackgroundCanvas.hidden = true;
+    }
 
     const clonedCopyright = clone.querySelector("#copyright");
     if (clonedCopyright) {
@@ -1189,30 +2308,32 @@ function syncPhonePreview() {
 
     canvas.innerHTML = "";
     canvas.style.width = `${imageWidth}px`;
-    canvas.style.minHeight = `${Math.max(poster.scrollHeight, poster.offsetHeight, resolution.height)}px`;
+    canvas.style.minHeight = "0";
     canvas.style.marginTop = "0";
     canvas.appendChild(clone);
 
     canvasWrap.innerHTML = "";
-    canvasWrap.style.backgroundColor = posterStyle.backgroundColor || backgroundColor;
+    canvasWrap.style.backgroundColor = "transparent";
     canvasWrap.appendChild(canvas);
 
     watermark.innerText = watermarkSettings.text;
-    watermark.style.backgroundColor = watermarkSettings.background;
+    watermark.style.backgroundColor = backgroundImageDataUrl ? "transparent" : watermarkSettings.background;
     watermark.style.color = watermarkSettings.color;
+    watermark.hidden = !showBottomWatermark;
 
     requestAnimationFrame(() => {
+        syncPhoneBackgroundCanvas(screen, resolution);
         const scale = screen.clientWidth / imageWidth;
         const scaledTopPadding = topPaddingHeight * scale;
         const scaledWatermarkHeight = watermarkBandHeight * scale;
         const scaledFontSize = parseFloat(window.getComputedStyle(document.getElementById("copyright")).fontSize || "13") * scale;
-        const contentHeight = Math.max(clone.scrollHeight, poster.scrollHeight, poster.offsetHeight) * scale;
-
         topPaddingLayer.style.height = `${scaledTopPadding}px`;
-        topPaddingLayer.style.backgroundColor = watermarkSettings.background;
+        topPaddingLayer.style.backgroundColor = backgroundImageDataUrl ? "transparent" : watermarkSettings.background;
         canvasWrap.style.top = `${scaledTopPadding}px`;
         canvasWrap.style.bottom = `${scaledWatermarkHeight}px`;
         canvasWrap.style.height = "";
+        const availableContentHeight = Math.max(screen.clientHeight - scaledTopPadding - scaledWatermarkHeight, 0);
+        const contentHeight = Math.max(clone.scrollHeight * scale, availableContentHeight);
         canvas.style.transform = `scale(${scale})`;
         canvas.style.height = `${contentHeight}px`;
         watermark.style.height = `${scaledWatermarkHeight}px`;
@@ -1256,7 +2377,7 @@ function changeTitle(index, value) {
 
 function changeText(index, value) {
     data[index].text = sanitizeRichText(value);
-    renderPreview();
+    schedulePreviewRender(PREVIEW_RENDER_DELAY_MS, () => renderPreview({ deferTypesetting: true }));
 }
 
 function getRichTextEditor(index) {
@@ -1377,12 +2498,22 @@ function pastePlainText(event) {
     document.execCommand("insertText", false, text);
 }
 
+function updateCardSizeValue(index, type, value) {
+    const selector = `[data-card-index="${index}"][data-size-type="${type}"]`;
+    const valueElement = document.querySelector(selector);
+
+    if (valueElement) {
+        valueElement.innerText = `${value}px`;
+    }
+}
+
 function changeTitleSize(index, delta) {
     data[index].titleSize += delta;
     if (data[index].titleSize < 6) {
         data[index].titleSize = 6;
     }
-    render();
+    updateCardSizeValue(index, "title", data[index].titleSize);
+    scheduleCardPreviewRender(index);
 }
 
 function changeTextSize(index, delta) {
@@ -1390,7 +2521,8 @@ function changeTextSize(index, delta) {
     if (data[index].textSize < 6) {
         data[index].textSize = 6;
     }
-    render();
+    updateCardSizeValue(index, "text", data[index].textSize);
+    scheduleCardPreviewRender(index);
 }
 
 function changeYearSize(delta) {
@@ -1413,6 +2545,85 @@ function changeSideSize(delta) {
 
 function changeBackgroundColor(value) {
     backgroundColor = value;
+    renderBackgroundPalette();
+    renderPreview();
+}
+
+function openBackgroundImagePicker() {
+    if (backgroundImageInput) {
+        backgroundImageInput.value = "";
+        backgroundImageInput.click();
+    }
+}
+
+function changeBackgroundImage(file) {
+    if (!file) return;
+
+    if (!file.type || !file.type.startsWith("image/")) {
+        window.alert("请选择图片文件作为背景。");
+        return;
+    }
+
+    if (file.size > MAX_BACKGROUND_IMAGE_FILE_SIZE) {
+        window.alert("背景图片不能超过 6MB，请压缩后再上传。");
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+        if (typeof reader.result !== "string") {
+            window.alert("背景图片读取失败，请重试。");
+            return;
+        }
+
+        backgroundImageDataUrl = reader.result;
+        backgroundImageName = file.name || "背景图片";
+        renderBackgroundImageControls();
+        renderPreview();
+    };
+    reader.onerror = () => {
+        window.alert("背景图片读取失败，请重试。");
+    };
+    reader.readAsDataURL(file);
+}
+
+function removeBackgroundImage() {
+    backgroundImageDataUrl = "";
+    backgroundImageName = "";
+    if (backgroundImageInput) {
+        backgroundImageInput.value = "";
+    }
+    renderBackgroundImageControls();
+    renderPreview();
+}
+
+function updateHeadlineFontSelect(selectEl, inputId, selectedValue, resolvedFontFamily) {
+    if (selectEl) {
+        selectEl.value = selectedValue;
+        selectEl.style.fontFamily = resolvedFontFamily;
+    }
+
+    const inputEl = document.getElementById(inputId);
+    if (inputEl) {
+        inputEl.style.fontFamily = resolvedFontFamily;
+    }
+}
+
+function changeYearFont(value, selectEl = null) {
+    yearFontFamily = value || INHERIT_FONT_VALUE;
+    updateHeadlineFontSelect(selectEl, "yearInput", yearFontFamily, resolveYearFontFamily());
+    renderPreview();
+}
+
+function changeSubtitleFont(value, selectEl = null) {
+    subtitleFontFamily = value || INHERIT_FONT_VALUE;
+    updateHeadlineFontSelect(selectEl, "subtitleInput", subtitleFontFamily, resolveSubtitleFontFamily());
+    renderPreview();
+}
+
+function changeSideFont(value, selectEl = null) {
+    sideFontFamily = value || INHERIT_FONT_VALUE;
+    updateHeadlineFontSelect(selectEl, "sideInput", sideFontFamily, resolveSideFontFamily());
     renderPreview();
 }
 
@@ -1433,6 +2644,7 @@ function changeCardTitleFont(index, value, selectEl = null) {
 
 function changeTextColor(value) {
     textColor = value;
+    renderTextColorPalette();
     renderPreview();
 }
 
@@ -1493,29 +2705,36 @@ function changeSideHeaderReserve(value) {
 }
 
 function changeSubtitle(value) {
-    renderVerticalTextTarget("subtitle", value);
-    syncCardsOffset();
-    schedulePhonePreviewSync();
-    saveState();
+    renderPreview();
 }
 
 function toggleTimeline() {
     showTimeline = !showTimeline;
+    updateTimelineButtons();
     renderPreview();
 }
 
 function toggleMonthTitles() {
     showMonthTitles = !showMonthTitles;
+    updateTimelineButtons();
     renderPreview();
 }
 
 function toggleMonthUnderlines() {
     showMonthUnderlines = !showMonthUnderlines;
+    updateTimelineButtons();
     renderPreview();
 }
 
 function toggleSideHeader() {
     showSideHeader = !showSideHeader;
+    updateTimelineButtons();
+    renderPreview();
+}
+
+function toggleBottomWatermark() {
+    showBottomWatermark = !showBottomWatermark;
+    updateTimelineButtons();
     renderPreview();
 }
 
@@ -1527,7 +2746,8 @@ function toggleSubtitlePosition() {
 function togglePhonePreview() {
     showPhonePreview = !showPhonePreview;
     updateTimelineButtons();
-    syncPhonePreview();
+    syncPreviewExportActionsPosition();
+    schedulePhonePreviewSync();
     saveState();
 }
 
@@ -1541,7 +2761,7 @@ function changePhoneResolution(value) {
 function changePhonePreviewScale(delta) {
     phonePreviewScale = Math.min(Math.max(phonePreviewScale + delta, 0.75), 2);
     phonePreviewScale = Math.round(phonePreviewScale * 10) / 10;
-    syncPhonePreview();
+    schedulePhonePreviewSync();
     saveState();
 }
 
@@ -1561,8 +2781,8 @@ function addCard() {
     data.push({
         title: "新的作品",
         text: "Loading...",
-        titleSize: 48,
-        textSize: 18,
+        titleSize: 70,
+        textSize: 48,
         titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
         contentFontFamily: INHERIT_FONT_VALUE,
         contentFontToolbarValue: INHERIT_FONT_VALUE,
@@ -1596,17 +2816,113 @@ const dragBar = document.getElementById("dragBar");
 const editor = document.getElementById("editor");
 
 let dragging = false;
+let posterWidthRerenderFrame = null;
+let viewportResizeRenderFrame = null;
+let viewportResizeCompletionTimer = null;
+
+function getCurrentEditorWidth() {
+    const width = parseInt(editor?.style.width || "", 10);
+    if (!Number.isNaN(width)) return width;
+
+    const measuredWidth = Math.round(editor?.getBoundingClientRect().width || 0);
+    return measuredWidth || 420;
+}
+
+function schedulePosterWidthRerender() {
+    if (dragging) {
+        schedulePreviewRender(DIVIDER_DRAG_RENDER_DELAY_MS);
+        return;
+    }
+
+    if (posterWidthRerenderFrame !== null) return;
+
+    posterWidthRerenderFrame = requestAnimationFrame(() => {
+        posterWidthRerenderFrame = null;
+        renderPreview();
+    });
+}
+
+function finalizePosterWidthRerender() {
+    if (posterWidthRerenderFrame !== null) {
+        cancelAnimationFrame(posterWidthRerenderFrame);
+        posterWidthRerenderFrame = null;
+    }
+
+    cancelPendingPreviewRender();
+    renderPreview({ deferTypesetting: true });
+}
+
+function updateEditorCollapseButton() {
+    const button = document.getElementById("editorCollapseBtn");
+    if (!button) return;
+
+    button.innerText = editorCollapsed ? "‹" : "›";
+    button.title = editorCollapsed ? "展开编辑器" : "收起编辑器";
+    button.setAttribute("aria-label", button.title);
+}
+
+function applyEditorCollapsedState({ shouldSave = false, shouldRerender = true } = {}) {
+    document.body.classList.toggle("editorCollapsed", editorCollapsed);
+    updateEditorCollapseButton();
+    syncPreviewExportActionsPosition();
+
+    if (shouldRerender) {
+        schedulePosterWidthRerender();
+    }
+
+    if (shouldSave) {
+        saveState();
+    }
+}
+
+function toggleEditorCollapsed(event = null) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    if (isMobileViewport()) return;
+
+    if (!editorCollapsed) {
+        editorWidth = getCurrentEditorWidth();
+    } else if (typeof editorWidth === "number") {
+        editor.style.width = `${editorWidth}px`;
+    }
+
+    editorCollapsed = !editorCollapsed;
+    applyEditorCollapsedState({ shouldSave: true, shouldRerender: true });
+}
+
+const editorCollapseBtn = document.getElementById("editorCollapseBtn");
+if (editorCollapseBtn) {
+    editorCollapseBtn.addEventListener("mousedown", (event) => {
+        event.stopPropagation();
+    });
+}
 
 dragBar.addEventListener("mousedown", function () {
     if (isMobileViewport()) return;
+
+    if (editorCollapsed) {
+        editorCollapsed = false;
+        if (typeof editorWidth === "number") {
+            editor.style.width = `${editorWidth}px`;
+        }
+        applyEditorCollapsedState({ shouldSave: true });
+    }
 
     dragging = true;
     document.body.style.userSelect = "none";
 });
 
 document.addEventListener("mouseup", function () {
+    const wasDragging = dragging;
     dragging = false;
     document.body.style.userSelect = "auto";
+
+    if (!wasDragging || editorCollapsed) return;
+
+    finalizePosterWidthRerender();
 
     const width = parseInt(editor.style.width, 10);
     if (!Number.isNaN(width)) {
@@ -1629,8 +2945,8 @@ document.addEventListener("mousemove", function (e) {
     editor.style.width = width + "px";
     editorWidth = width;
 
-    syncCardsOffset();
-    schedulePhonePreviewSync();
+    syncPreviewExportActionsPosition();
+    schedulePosterWidthRerender();
 });
 
 /* ===========================
@@ -1662,6 +2978,12 @@ if (textColorPicker) {
 if (customColorPicker) {
     customColorPicker.oninput = function () {
         changeBackgroundColor(this.value);
+    };
+}
+
+if (backgroundImageInput) {
+    backgroundImageInput.onchange = function () {
+        changeBackgroundImage(this.files?.[0] || null);
     };
 }
 
@@ -1707,10 +3029,31 @@ if (phoneResolutionSelect) {
     };
 }
 
+function scheduleViewportResizeCompletion() {
+    if (viewportResizeCompletionTimer !== null) {
+        window.clearTimeout(viewportResizeCompletionTimer);
+    }
+
+    viewportResizeCompletionTimer = window.setTimeout(() => {
+        viewportResizeCompletionTimer = null;
+        renderPreview({ deferTypesetting: true });
+    }, DIVIDER_DRAG_RENDER_DELAY_MS);
+}
+
 function handleViewportChange() {
-    applyResponsiveViewport();
-    syncCardsOffset();
-    syncPhonePreview();
+    if (viewportResizeRenderFrame === null) {
+        viewportResizeRenderFrame = requestAnimationFrame(() => {
+            viewportResizeRenderFrame = null;
+            renderPreview({
+                deferTypesetting: true,
+                scheduleDeferredTypesetting: false,
+                shouldSave: false
+            });
+        });
+    }
+
+    scheduleViewportResizeCompletion();
+    syncPreviewExportActionsPosition();
 }
 
 const previewScrollContainer = document.getElementById("preview");
@@ -1719,6 +3062,7 @@ if (previewScrollContainer) {
 }
 
 window.addEventListener("resize", handleViewportChange);
+window.addEventListener("beforeunload", flushPendingStateSave);
 
 if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", handleViewportChange);
@@ -1849,6 +3193,7 @@ function renderVerticalTextFlow(element, value, doc = document) {
     if (!element) return;
 
     const layout = createVerticalTextLayout(value);
+    element.classList.remove("typesetText");
     element.innerHTML = "";
 
     layout.columns.forEach((column) => {
@@ -2013,7 +3358,10 @@ function renderVerticalTextForExport(clonedDoc) {
     });
 }
 
-async function capturePosterCanvas({ hideCopyright = false, scale = 3, afterCapture = null } = {}) {
+async function capturePosterCanvas({ hideCopyright = false, scale = 3, afterCapture = null, transparentPosterBackground = false } = {}) {
+    await flushPendingPreviewRender();
+    await flushDeferredPosterTypesetting();
+
     const exportState = preparePosterForExport();
     if (!exportState) return Promise.reject(new Error("未找到预览区域，无法导出。"));
 
@@ -2023,12 +3371,20 @@ async function capturePosterCanvas({ hideCopyright = false, scale = 3, afterCapt
         }
 
         const canvas = await html2canvas(exportState.poster, {
-            backgroundColor: backgroundColor,
+            backgroundColor: transparentPosterBackground ? null : backgroundColor,
             scale,
             useCORS: true,
             onclone: (clonedDoc) => {
                 const clonedPoster = clonedDoc.getElementById("poster");
                 if (clonedPoster) {
+                    if (transparentPosterBackground) {
+                        clonedPoster.style.backgroundColor = "transparent";
+                        clonedPoster.style.backgroundImage = "none";
+                        const clonedBackgroundCanvas = clonedPoster.querySelector(".posterBackgroundCanvas");
+                        if (clonedBackgroundCanvas) {
+                            clonedBackgroundCanvas.hidden = true;
+                        }
+                    }
                     clonedPoster.style.setProperty("--text-color", textColor);
                     clonedPoster.style.setProperty("--text-side-spacing", `${sideSpacing}px`);
                     clonedPoster.style.setProperty("--side-header-reserve", `${sideHeaderReserve}px`);
@@ -2069,12 +3425,15 @@ async function exportImage() {
     const mobileFallbackWindow = isLikelyMobileBrowser() ? window.open("", "_blank") : null;
 
     try {
-        const sourceCanvas = await capturePosterCanvas();
+        const sourceCanvas = await capturePosterCanvas({
+            hideCopyright: !showBottomWatermark,
+            transparentPosterBackground: Boolean(backgroundImageDataUrl)
+        });
         const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
         const scale = sourceCanvas.width / (document.getElementById("poster")?.offsetWidth || sourceCanvas.width);
         const posterStyle = window.getComputedStyle(document.getElementById("poster"));
         const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
-        const canvas = addCanvasTopPadding(sourceCanvas, topPaddingHeight, posterStyle.backgroundColor || backgroundColor);
+        const canvas = await addCanvasTopPadding(sourceCanvas, topPaddingHeight, posterStyle.backgroundColor || backgroundColor);
         const blob = await canvasToBlob(canvas, "image/jpeg", 1);
         downloadBlob(blob, "年度总结.jpg", { fallbackWindow: mobileFallbackWindow });
     } catch (error) {
@@ -2106,9 +3465,11 @@ function getWatermarkSettings(scale) {
     };
 }
 
-function drawCenteredWatermark(ctx, settings, width, contentHeight, bandHeight) {
-    ctx.fillStyle = settings.background;
-    ctx.fillRect(0, contentHeight, width, bandHeight);
+function drawCenteredWatermark(ctx, settings, width, contentHeight, bandHeight, { fillBackground = true } = {}) {
+    if (fillBackground) {
+        ctx.fillStyle = settings.background;
+        ctx.fillRect(0, contentHeight, width, bandHeight);
+    }
     ctx.fillStyle = settings.color;
     ctx.font = settings.font;
     ctx.textAlign = "center";
@@ -2127,7 +3488,7 @@ function getExportTopPaddingHeight(resolution, scale) {
     return Math.round(topPadding * scale);
 }
 
-function addCanvasTopPadding(sourceCanvas, paddingHeight, background) {
+async function addCanvasTopPadding(sourceCanvas, paddingHeight, background) {
     if (paddingHeight <= 0) return sourceCanvas;
 
     const paddedCanvas = document.createElement("canvas");
@@ -2135,8 +3496,7 @@ function addCanvasTopPadding(sourceCanvas, paddingHeight, background) {
 
     paddedCanvas.width = sourceCanvas.width;
     paddedCanvas.height = sourceCanvas.height + paddingHeight;
-    ctx.fillStyle = background;
-    ctx.fillRect(0, 0, paddedCanvas.width, paddedCanvas.height);
+    await drawFullSliceBackground(ctx, paddedCanvas.width, paddedCanvas.height, background);
     ctx.drawImage(sourceCanvas, 0, paddingHeight);
 
     return paddedCanvas;
@@ -2304,7 +3664,10 @@ function isProtectedCutBand(y, ranges, clearance) {
 }
 
 function getCanvasPixelDistance(a, b) {
-    return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+    return Math.abs(a[0] - b[0])
+        + Math.abs(a[1] - b[1])
+        + Math.abs(a[2] - b[2])
+        + Math.abs((a[3] ?? 255) - (b[3] ?? 255));
 }
 
 function mergeCanvasColumns(columns) {
@@ -2355,7 +3718,7 @@ function getCanvasBackgroundSample(sourceCanvas, ctx) {
     points.forEach(([x, y]) => {
         try {
             const pixel = ctx.getImageData(x, y, 1, 1).data;
-            samples.push([pixel[0], pixel[1], pixel[2]]);
+            samples.push([pixel[0], pixel[1], pixel[2], pixel[3]]);
         } catch (error) {
             // Canvas may be tainted by a remote asset; fall back to DOM-only cut checks.
         }
@@ -2399,7 +3762,7 @@ function createCanvasInkDetector(sourceCanvas) {
                     const alpha = data[index + 3];
                     if (alpha < 12) continue;
 
-                    const pixel = [data[index], data[index + 1], data[index + 2]];
+                    const pixel = [data[index], data[index + 1], data[index + 2], alpha];
                     if (getCanvasPixelDistance(pixel, background) > colorThreshold) {
                         inkPixels += 1;
                         if (inkPixels >= minInkPixels) {
@@ -2506,7 +3869,77 @@ function getTimelineCardSliceBounds(sourceCanvas) {
         .filter(Boolean);
 }
 
-async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, topPaddingHeight, watermarkBandHeight, watermarkSettings, outputHeight = null) {
+function loadBackgroundImageForCanvas() {
+    if (!backgroundImageDataUrl) return Promise.resolve(null);
+
+    if (backgroundImageCanvasCache.src === backgroundImageDataUrl && backgroundImageCanvasCache.promise) {
+        return backgroundImageCanvasCache.promise;
+    }
+
+    backgroundImageCanvasCache = {
+        src: backgroundImageDataUrl,
+        image: null,
+        promise: new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => {
+                backgroundImageCanvasCache.image = image;
+                resolve(image);
+            };
+            image.onerror = () => reject(new Error("背景图片加载失败，已使用背景颜色兜底。"));
+            image.src = backgroundImageDataUrl;
+        })
+    };
+
+    return backgroundImageCanvasCache.promise;
+}
+
+function drawMirroredRepeatedImageAtNaturalSize(ctx, image, width, height) {
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (!sourceWidth || !sourceHeight || !width || !height) return;
+
+    // Mirror tiling softens seams while keeping the image at its natural size.
+    // backgroundImageBlendEdge is reserved for a later cross-fade edge blend.
+    const baseX = Math.round((width - sourceWidth) / 2);
+    const baseY = Math.round((height - sourceHeight) / 2);
+    const firstColumn = Math.floor((0 - baseX) / sourceWidth);
+    const lastColumn = Math.floor((width - 1 - baseX) / sourceWidth);
+    const firstRow = Math.floor((0 - baseY) / sourceHeight);
+    const lastRow = Math.floor((height - 1 - baseY) / sourceHeight);
+
+    for (let row = firstRow; row <= lastRow; row += 1) {
+        for (let column = firstColumn; column <= lastColumn; column += 1) {
+            const x = baseX + column * sourceWidth;
+            const y = baseY + row * sourceHeight;
+            const flipX = Math.abs(column) % 2 === 1;
+            const flipY = Math.abs(row) % 2 === 1;
+
+            ctx.save();
+            ctx.translate(flipX ? x + sourceWidth : x, flipY ? y + sourceHeight : y);
+            ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+            ctx.drawImage(image, 0, 0, sourceWidth, sourceHeight);
+            ctx.restore();
+        }
+    }
+}
+
+async function drawFullSliceBackground(ctx, width, height, fallbackBackground = backgroundColor) {
+    ctx.fillStyle = fallbackBackground || backgroundColor;
+    ctx.fillRect(0, 0, width, height);
+
+    if (!backgroundImageDataUrl) return;
+
+    try {
+        const image = await loadBackgroundImageForCanvas();
+        if (image) {
+            drawMirroredRepeatedImageAtNaturalSize(ctx, image, width, height);
+        }
+    } catch (error) {
+        console.warn(error);
+    }
+}
+
+async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, topPaddingHeight, watermarkBandHeight, watermarkSettings, outputHeight = null, shouldDrawWatermark = true) {
     const sliceOutputHeight = outputHeight ?? topPaddingHeight + sourceHeight + watermarkBandHeight;
     const watermarkTop = sliceOutputHeight - watermarkBandHeight;
     const sliceCanvas = document.createElement("canvas");
@@ -2514,8 +3947,7 @@ async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, to
 
     sliceCanvas.width = sourceCanvas.width;
     sliceCanvas.height = sliceOutputHeight;
-    ctx.fillStyle = watermarkSettings.background;
-    ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+    await drawFullSliceBackground(ctx, sliceCanvas.width, sliceCanvas.height);
     ctx.drawImage(
         sourceCanvas,
         0,
@@ -2527,13 +3959,16 @@ async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, to
         sourceCanvas.width,
         sourceHeight
     );
-    drawCenteredWatermark(
-        ctx,
-        watermarkSettings,
-        sliceCanvas.width,
-        watermarkTop,
-        watermarkBandHeight
-    );
+    if (shouldDrawWatermark && watermarkBandHeight > 0) {
+        drawCenteredWatermark(
+            ctx,
+            watermarkSettings,
+            sliceCanvas.width,
+            watermarkTop,
+            watermarkBandHeight,
+            { fillBackground: !backgroundImageDataUrl }
+        );
+    }
 
     const blob = await canvasToBlob(sliceCanvas, "image/jpeg", 1);
     zip.file(`年度总结-${String(index).padStart(2, "0")}.jpg`, blob);
@@ -2553,8 +3988,19 @@ function setButtonBusy(button, busyText) {
     };
 }
 
+function isVisibleElement(element) {
+    return Boolean(element && element.offsetParent !== null);
+}
+
+function getActiveExportButton(primaryId, fallbackId) {
+    const primaryButton = document.getElementById(primaryId);
+    if (isVisibleElement(primaryButton)) return primaryButton;
+
+    return document.getElementById(fallbackId);
+}
+
 async function exportSlicedImagesZip() {
-    const button = document.getElementById("exportSlicesBtn");
+    const button = getActiveExportButton("previewExportSlicesBtn", "exportSlicesBtn");
     const restoreButton = setButtonBusy(button, "正在切图...");
 
     try {
@@ -2570,14 +4016,17 @@ async function exportSlicedImagesZip() {
         const sourceCanvas = await capturePosterCanvas({
             hideCopyright: true,
             scale: exportScale,
+            transparentPosterBackground: Boolean(backgroundImageDataUrl),
             afterCapture: (canvas) => {
                 protectedRanges = getProtectedTextRanges(canvas);
             }
         });
         const scale = sourceCanvas.width / posterWidth;
         const watermarkSettings = getWatermarkSettings(scale);
-        const watermarkBandHeight = getWatermarkBandHeight(resolution, scale, watermarkSettings);
         const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
+        const watermarkBandHeight = showBottomWatermark
+            ? getWatermarkBandHeight(resolution, scale, watermarkSettings)
+            : topPaddingHeight;
         const sliceHeight = resolution.height;
         const contentSliceHeight = Math.max(sliceHeight - topPaddingHeight - watermarkBandHeight, 1);
         const hasInkAtRow = createCanvasInkDetector(sourceCanvas);
@@ -2602,14 +4051,17 @@ async function exportSlicedImagesZip() {
                 topPaddingHeight,
                 watermarkBandHeight,
                 watermarkSettings,
-                sliceHeight
+                sliceHeight,
+                showBottomWatermark
             );
 
             sourceY += currentContentHeight;
             index += 1;
         }
 
-        button.innerText = "正在打包...";
+        if (button) {
+            button.innerText = "正在打包...";
+        }
         const zipBlob = await zip.generateAsync({ type: "blob" });
         downloadBlob(zipBlob, "年度总结-已切图jpg.zip");
     } catch (error) {
@@ -2628,6 +4080,8 @@ loadState();
 if (typeof editorWidth === "number") {
     editor.style.width = editorWidth + "px";
 }
+
+applyEditorCollapsedState({ shouldSave: false, shouldRerender: false });
 
 if (customColorPicker) {
     customColorPicker.value = backgroundColor;
@@ -2666,4 +4120,17 @@ if (sideHeaderReserveInput) {
     sideHeaderReserveInput.value = String(sideHeaderReserve);
 }
 
-render();
+scheduleTypesettingOverlay("正在排版...");
+renderAuxiliaryControls();
+render({
+    deferEditor: true,
+    previewOptions: {
+        updateControls: false,
+        shouldSave: false,
+        hideOverlayWhenReady: true
+    }
+});
+
+requestAnimationFrame(() => {
+    isInitializing = false;
+});

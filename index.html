@@ -4,10 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1.0">
     <title>长文排版</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
     <div id="preview">
+        <div id="posterTypesettingOverlay" class="posterTypesettingOverlay visible" aria-hidden="false">
+            <div class="posterTypesettingMessage">正在排版...</div>
+        </div>
         <div id="poster">
             <div id="header">
                 <div id="year">输入标题</div>
@@ -19,12 +22,20 @@
         </div>
     </div>
 
-    <div id="dragBar"></div>
+    <div class="previewExportActions" aria-label="导出图片">
+        <button id="previewExportBtn" class="previewExportBtn" type="button" onclick="exportImage()">导出长图</button>
+        <button id="previewExportSlicesBtn" class="previewExportBtn secondary" type="button" onclick="exportSlicedImagesZip()">导出已切图</button>
+    </div>
+
+    <div id="dragBar">
+        <button id="editorCollapseBtn" type="button" title="收起编辑器" aria-label="收起编辑器" onclick="toggleEditorCollapsed(event)">›</button>
+    </div>
 
     <div id="editor">
         <div class="editorHeader">
             <h2>编辑器</h2>
             <div class="editorHeaderActions">
+                <button id="bottomWatermarkToggleBtn" type="button" onclick="toggleBottomWatermark()">隐藏底部水印</button>
                 <button id="timelineToggleBtn" type="button" onclick="toggleTimeline()">隐藏时间轴</button>
                 <button id="monthTitleToggleBtn" type="button" onclick="toggleMonthTitles()">隐藏段落标题</button>
                 <button id="underlineToggleBtn" type="button" onclick="toggleMonthUnderlines()">隐藏段落标题横线</button>
@@ -44,13 +55,23 @@
             <div class="resolutionHint">手机预览和切图导出会按当前分辨率实时渲染</div>
         </div>
 
-        <button id="exportBtn" onclick="exportImage()">📲 导出长图JPG</button>
-        <button id="exportSlicesBtn" onclick="exportSlicedImagesZip()">导出已切图的JPG</button>
+        <button id="exportBtn" class="mobileExportBtn" onclick="exportImage()">导出长图</button>
+        <button id="exportSlicesBtn" class="mobileExportBtn" onclick="exportSlicedImagesZip()">导出已切图</button>
 
         <div class="editItem">
             <label>背景颜色</label>
             <div id="bgPalette" class="bgPalette"></div>
             <input type="color" id="customColorPicker" value="#efefef" class="hiddenColorPicker">
+            <div class="backgroundImagePanel">
+                <label for="backgroundImageInput">背景图片</label>
+                <input type="file" id="backgroundImageInput" accept="image/*" class="hiddenFileInput">
+                <div class="backgroundImageActions">
+                    <button type="button" onclick="openBackgroundImagePicker()">上传图片</button>
+                    <button type="button" id="removeBackgroundImageBtn" onclick="removeBackgroundImage()">移除图片</button>
+                </div>
+                <div id="backgroundImageStatus" class="backgroundImageStatus">未上传背景图片</div>
+                <div id="backgroundImagePreview" class="backgroundImagePreview" hidden></div>
+            </div>
         </div>
 
         <div class="editItem">
@@ -84,6 +105,11 @@
             </div>
         </div>
 
+        <div class="editItem fontLoaderPanel">
+            <button id="loadFontsBtn" type="button">读取本机字体</button>
+            <div id="fontStatus" class="fontStatus"></div>
+        </div>
+
         <div class="editItem">
             <label>
                 顶部标题
@@ -91,6 +117,7 @@
                 <button onclick="changeYearSize(2)">A+</button>
                 <span id="yearSizeValue" class="sizeValue"></span>
             </label>
+            <select id="yearFontSelect" class="fontSelect blockFontSelect" onchange="changeYearFont(this.value,this)"></select>
             <textarea id="yearInput" rows="2">输入标题</textarea>
         </div>
 
@@ -102,6 +129,7 @@
                 <button id="subtitlePositionToggleBtn" type="button" onclick="toggleSubtitlePosition()">竖排左侧</button>
                 <span id="subtitleSizeValue" class="sizeValue"></span>
             </label>
+            <select id="subtitleFontSelect" class="fontSelect blockFontSelect" onchange="changeSubtitleFont(this.value,this)"></select>
             <textarea id="subtitleInput" rows="2">作者：</textarea>
         </div>
 
@@ -112,12 +140,8 @@
                 <button onclick="changeSideSize(2)">A+</button>
                 <span id="sideSizeValue" class="sizeValue"></span>
             </label>
+            <select id="sideFontSelect" class="fontSelect blockFontSelect" onchange="changeSideFont(this.value,this)"></select>
             <textarea id="sideInput" rows="2">输入竖排标题</textarea>
-        </div>
-
-        <div class="editItem fontLoaderPanel">
-            <button id="loadFontsBtn" type="button">读取本机字体</button>
-            <div id="fontStatus" class="fontStatus"></div>
         </div>
 
         <button id="addBtn" onclick="addCard()">＋ 新增段落</button>
@@ -155,6 +179,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script src="script.js"></script>
+    <script src="script.js?v=13"></script>
 </body>
 </html>
