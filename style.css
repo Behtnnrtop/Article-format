@@ -1117,6 +1117,10 @@ button:hover{
     display:none;
 }
 
+.mobileTypesetRefreshBtn{
+    display:none;
+}
+
 /* ===========================
    Blocks
 =========================== */
@@ -1371,6 +1375,45 @@ button:hover{
         display:none;
     }
 
+    .mobileTypesetRefreshBtn{
+        position:fixed;
+        top:calc(env(safe-area-inset-top,0px) + 12px);
+        right:12px;
+        z-index:30;
+        display:none;
+        min-height:38px;
+        padding:0 14px;
+        border:1px solid rgba(148,163,184,.35);
+        border-radius:999px;
+        color:#64748b;
+        background:rgba(255,255,255,.94);
+        font-size:14px;
+        font-weight:700;
+        box-shadow:0 8px 18px rgba(15,23,42,.12);
+    }
+
+    .mobileTypesetRefreshBtn.visible{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+    }
+
+    .mobileTypesetRefreshBtn.dirty{
+        color:#ffffff;
+        border-color:rgba(47,95,187,.25);
+        background:#2f5fbb;
+        box-shadow:0 8px 18px rgba(15,23,42,.2);
+    }
+
+    .mobileTypesetRefreshBtn:disabled{
+        cursor:default;
+    }
+
+    .mobileTypesetRefreshBtn.busy{
+        opacity:.72;
+        pointer-events:none;
+    }
+
     #phonePreviewToggleBtn,
     .phonePreviewPanel{
         display:none !important;
@@ -1442,24 +1485,25 @@ button:hover{
 
     [data-mobile-panel]{
         order:3;
+    }
+
+    [data-mobile-panel]:not(.mobilePanelActive){
         display:none !important;
     }
 
-    [data-mobile-panel].mobilePanelActive{
-        display:block !important;
+    .editItem.mobilePanelActive,
+    #cardEditor.mobilePanelActive,
+    .mobileExportBtn.mobilePanelActive{
+        display:block;
     }
 
     .editorHeaderActions.mobilePanelActive{
         order:2;
-        display:flex !important;
+        display:flex;
     }
 
     .mobileExportBtn{
         display:block;
-    }
-
-    .mobileExportBtn[data-mobile-panel]:not(.mobilePanelActive){
-        display:none;
     }
 
     #exportSlicesBtn.mobileExportBtn{

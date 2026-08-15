@@ -668,9 +668,9 @@ function getItemParagraphSpacing(item) {
     return typeof item.paragraphSpacing === "number" ? item.paragraphSpacing : paragraphSpacing;
 }
 
-function renderRichTextPreview(value) {
+function renderRichTextPreview(value, { sanitize = true } = {}) {
     const template = document.createElement("template");
-    template.innerHTML = sanitizeRichText(value);
+    template.innerHTML = sanitize ? sanitizeRichText(value) : String(value ?? "");
 
     const paragraphs = [];
     let paragraph = document.createElement("div");
@@ -717,11 +717,17 @@ const STARTUP_TYPESET_IDLE_TIMEOUT_MS = 700;
 const TYPESETTING_OVERLAY_DELAY_MS = 0;
 const TYPESETTING_OVERLAY_MIN_VISIBLE_MS = 0;
 const STATE_SAVE_DEBOUNCE_MS = 350;
+const MOBILE_TEXT_INPUT_COMMIT_DELAY_MS = 520;
 
 let typesetMeasureLayer = null;
 let pendingPreviewRenderTimer = null;
 let pendingPreviewRenderCallback = null;
 const pendingCardPreviewIndexes = new Set();
+const pendingDeferredCardPreviewIndexes = new Set();
+const pendingMobileTextInputs = new Map();
+let pendingMobileTextInputTimer = null;
+const pendingCardTypesetTasks = new Map();
+let mobileTypesettingDirty = false;
 let pendingPosterTypesetTask = null;
 let pendingTypesettingOverlayTimer = null;
 let pendingTypesettingOverlayHideTimer = null;
@@ -973,12 +979,186 @@ function schedulePreviewRender(delay = PREVIEW_RENDER_DELAY_MS, renderCallback =
     }, delay);
 }
 
+function getMobileTypesetRefreshButton() {
+    return document.getElementById("mobileTypesetRefreshBtn");
+}
+
+function updateMobileTypesetRefreshButton({ busy = false } = {}) {
+    const button = getMobileTypesetRefreshButton();
+    if (!button) return;
+
+    const shouldShow = isMobileViewport();
+    button.classList.toggle("visible", shouldShow);
+    button.classList.toggle("dirty", mobileTypesettingDirty);
+    button.classList.toggle("busy", busy);
+    button.disabled = busy || !mobileTypesettingDirty;
+    button.innerText = busy
+        ? "排版中..."
+        : (mobileTypesettingDirty ? "刷新排版" : "无修改待刷新");
+}
+
+function markMobileTypesettingDirty() {
+    if (!isMobileViewport()) return false;
+
+    mobileTypesettingDirty = true;
+    updateMobileTypesetRefreshButton();
+    return true;
+}
+
+function clearMobileTypesettingDirty() {
+    mobileTypesettingDirty = false;
+    updateMobileTypesetRefreshButton();
+}
+
+function scheduleMobileFastPreviewRender(delay = PREVIEW_RENDER_DELAY_MS) {
+    if (!markMobileTypesettingDirty()) {
+        scheduleDeferredFullPreviewRender(delay);
+        return;
+    }
+
+    schedulePreviewRender(delay, () => renderPreview({
+        deferTypesetting: true,
+        scheduleDeferredTypesetting: false
+    }));
+}
+
+function renderLayoutChangePreview({ deferEditor = false } = {}) {
+    if (isMobileViewport()) {
+        markMobileTypesettingDirty();
+        render({
+            deferEditor,
+            previewOptions: {
+                deferTypesetting: true,
+                scheduleDeferredTypesetting: false
+            }
+        });
+        return;
+    }
+
+    render({ deferEditor });
+}
+
+async function flushMobileTypesettingIfNeeded({ force = false } = {}) {
+    if (!force && (!isMobileViewport() || !mobileTypesettingDirty)) return false;
+
+    flushPendingMobileTextInputs();
+    await flushPendingPreviewRender();
+    await flushDeferredCardTypesetting();
+    await flushDeferredPosterTypesetting();
+
+    updateMobileTypesetRefreshButton({ busy: true });
+    applyPosterTypesetting();
+    syncCardsOffset();
+    schedulePhonePreviewSync();
+    schedulePosterBackgroundSync(document.getElementById("poster"));
+    clearMobileTypesettingDirty();
+    saveState();
+    return true;
+}
+
+async function refreshMobileTypesetting() {
+    if (!isMobileViewport()) return;
+
+    await flushMobileTypesettingIfNeeded({ force: true });
+}
+
 async function flushPendingPreviewRender() {
     if (pendingPreviewRenderTimer === null) return;
 
     const callback = pendingPreviewRenderCallback || renderPreview;
     cancelPendingPreviewRender();
     await callback();
+}
+
+function clearPendingMobileTextInputTimer() {
+    if (pendingMobileTextInputTimer === null) return;
+
+    window.clearTimeout(pendingMobileTextInputTimer);
+    pendingMobileTextInputTimer = null;
+}
+
+function flushPendingMobileTextInputs({ schedulePreview = true } = {}) {
+    if (!pendingMobileTextInputs.size) return false;
+
+    const pendingEntries = Array.from(pendingMobileTextInputs.entries());
+    clearPendingMobileTextInputTimer();
+    pendingMobileTextInputs.clear();
+
+    pendingEntries.forEach(([index, value]) => {
+        if (!data[index]) return;
+
+        data[index].text = sanitizeRichText(value);
+
+        if (schedulePreview) {
+            pendingCardPreviewIndexes.add(index);
+            pendingDeferredCardPreviewIndexes.add(index);
+            markMobileTypesettingDirty();
+        }
+    });
+
+    if (schedulePreview && pendingCardPreviewIndexes.size) {
+        schedulePreviewRender(0, flushPendingCardPreviewRenders);
+    }
+
+    return true;
+}
+
+function scheduleMobileTextInputCommit(index, value) {
+    pendingMobileTextInputs.set(index, value);
+    clearPendingMobileTextInputTimer();
+
+    pendingMobileTextInputTimer = window.setTimeout(() => {
+        flushPendingMobileTextInputs();
+    }, MOBILE_TEXT_INPUT_COMMIT_DELAY_MS);
+}
+
+function cancelDeferredCardTypesetting(index) {
+    const task = pendingCardTypesetTasks.get(index);
+    if (!task) return;
+
+    if (task.type === "idle" && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(task.id);
+    } else {
+        window.clearTimeout(task.id);
+    }
+
+    pendingCardTypesetTasks.delete(index);
+}
+
+function runDeferredCardTypesetting(index) {
+    cancelDeferredCardTypesetting(index);
+
+    const card = document.querySelector(`#cards .card[data-card-index="${index}"]`);
+    if (!card) return;
+
+    applyCardTypesetting(card);
+    syncCardsOffset();
+    schedulePhonePreviewSync();
+    schedulePosterBackgroundSync(document.getElementById("poster"));
+}
+
+function scheduleDeferredCardTypesetting(index) {
+    cancelDeferredCardTypesetting(index);
+
+    if (typeof window.requestIdleCallback === "function") {
+        const id = window.requestIdleCallback(() => {
+            runDeferredCardTypesetting(index);
+        }, { timeout: STARTUP_TYPESET_IDLE_TIMEOUT_MS });
+        pendingCardTypesetTasks.set(index, { type: "idle", id });
+        return;
+    }
+
+    const id = window.setTimeout(() => {
+        runDeferredCardTypesetting(index);
+    }, 0);
+    pendingCardTypesetTasks.set(index, { type: "timeout", id });
+}
+
+async function flushDeferredCardTypesetting() {
+    if (!pendingCardTypesetTasks.size) return;
+
+    const indexes = Array.from(pendingCardTypesetTasks.keys());
+    indexes.forEach(runDeferredCardTypesetting);
 }
 
 function getPosterTypesettingOverlay() {
@@ -1493,6 +1673,17 @@ function flushPendingStateSave() {
     commitStateSave();
 }
 
+function flushPendingInputAndState() {
+    const hadPendingInput = flushPendingMobileTextInputs({ schedulePreview: false });
+
+    if (hadPendingInput) {
+        saveState({ immediate: true });
+        return;
+    }
+
+    flushPendingStateSave();
+}
+
 function quoteCssFontFamily(value) {
     return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
@@ -1671,7 +1862,7 @@ async function loadSystemFonts() {
 
 function renderPreviewCard(item, index, previewFontScale = getPreviewFontScale()) {
     const titleText = escapeHtml(item.title);
-    const textHtml = renderRichTextPreview(item.text);
+    const textHtml = renderRichTextPreview(item.text, { sanitize: false });
     const itemLineSpacing = getItemLineSpacing(item);
     const itemParagraphSpacing = getItemParagraphSpacing(item);
 
@@ -1685,7 +1876,7 @@ function renderPreviewCard(item, index, previewFontScale = getPreviewFontScale()
         `;
 }
 
-function renderPreviewCardByIndex(index) {
+function renderPreviewCardByIndex(index, { deferTypesetting = false } = {}) {
     const item = data[index];
     const existingCard = document.querySelector(`#cards .card[data-card-index="${index}"]`);
 
@@ -1704,9 +1895,16 @@ function renderPreviewCardByIndex(index) {
     }
 
     existingCard.replaceWith(nextCard);
-    applyCardTypesetting(nextCard);
+
+    if (deferTypesetting) {
+        markMobileTypesettingDirty();
+    } else {
+        cancelDeferredCardTypesetting(index);
+        applyCardTypesetting(nextCard);
+        schedulePhonePreviewSync();
+    }
+
     syncCardsOffset();
-    schedulePhonePreviewSync();
     schedulePosterBackgroundSync(document.getElementById("poster"));
     saveState();
 }
@@ -1715,15 +1913,30 @@ function flushPendingCardPreviewRenders() {
     const indexes = Array.from(pendingCardPreviewIndexes);
     pendingCardPreviewIndexes.clear();
 
-    indexes.forEach(renderPreviewCardByIndex);
+    indexes.forEach((index) => {
+        const deferTypesetting = pendingDeferredCardPreviewIndexes.has(index);
+        pendingDeferredCardPreviewIndexes.delete(index);
+        renderPreviewCardByIndex(index, { deferTypesetting });
+    });
 }
 
 function scheduleCardPreviewRender(index) {
     pendingCardPreviewIndexes.add(index);
+
+    if (isMobileViewport()) {
+        pendingDeferredCardPreviewIndexes.add(index);
+        markMobileTypesettingDirty();
+    }
+
     schedulePreviewRender(PREVIEW_RENDER_DELAY_MS, flushPendingCardPreviewRenders);
 }
 
 function scheduleDeferredFullPreviewRender(delay = PREVIEW_RENDER_DELAY_MS) {
+    if (isMobileViewport()) {
+        scheduleMobileFastPreviewRender(delay);
+        return;
+    }
+
     schedulePreviewRender(delay, () => renderPreview({ deferTypesetting: true }));
 }
 
@@ -1760,7 +1973,7 @@ function renderHeaderInputPreview() {
         renderVerticalTextTarget("side");
     }
 
-    schedulePreviewRender(PREVIEW_RENDER_DELAY_MS, () => renderPreview({ deferTypesetting: true }));
+    scheduleMobileFastPreviewRender();
 }
 
 function renderAuxiliaryControls() {
@@ -1771,9 +1984,13 @@ function renderAuxiliaryControls() {
 }
 
 async function renderPreview({ updateControls = false, shouldSave = true, deferTypesetting = false, hideOverlayWhenReady = false, scheduleDeferredTypesetting = true } = {}) {
+    const shouldManualMobileTypeset = isMobileViewport() && deferTypesetting;
+
     cancelDeferredPosterTypesetting();
     cancelPendingPreviewRender();
     pendingCardPreviewIndexes.clear();
+    pendingDeferredCardPreviewIndexes.clear();
+    Array.from(pendingCardTypesetTasks.keys()).forEach(cancelDeferredCardTypesetting);
     applyResponsiveViewport();
 
     const previewFontScale = getPreviewFontScale();
@@ -1861,11 +2078,14 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
     document.getElementById("cards").innerHTML = html;
 
     if (deferTypesetting) {
-        if (scheduleDeferredTypesetting) {
+        if (shouldManualMobileTypeset) {
+            markMobileTypesettingDirty();
+        } else if (scheduleDeferredTypesetting) {
             scheduleDeferredPosterTypesetting({ shouldSave });
         }
     } else {
         applyPosterTypesetting();
+        clearMobileTypesettingDirty();
     }
 
     syncCardsOffset();
@@ -2025,6 +2245,7 @@ function scheduleEditorRender() {
 }
 
 function render({ deferEditor = false, previewOptions = {} } = {}) {
+    flushPendingMobileTextInputs({ schedulePreview: false });
     renderPreview(previewOptions);
 
     if (deferEditor) {
@@ -2432,10 +2653,23 @@ function schedulePhonePreviewSync() {
 
 function changeTitle(index, value) {
     data[index].title = value;
-    renderPreview();
+
+    if (isMobileViewport()) {
+        scheduleCardPreviewRender(index);
+        return;
+    }
+
+    scheduleCardPreviewRender(index);
 }
 
 function changeText(index, value) {
+    if (!data[index]) return;
+
+    if (isMobileViewport()) {
+        scheduleMobileTextInputCommit(index, value);
+        return;
+    }
+
     data[index].text = sanitizeRichText(value);
     schedulePreviewRender(PREVIEW_RENDER_DELAY_MS, () => renderPreview({ deferTypesetting: true }));
 }
@@ -2515,6 +2749,15 @@ function formatCardText(index, command) {
     data[index].text = sanitizeRichText(editorEl.innerHTML);
     editorEl.innerHTML = data[index].text;
     saveRichTextSelection(index);
+
+    if (isMobileViewport()) {
+        pendingCardPreviewIndexes.add(index);
+        pendingDeferredCardPreviewIndexes.add(index);
+        markMobileTypesettingDirty();
+        schedulePreviewRender(0, flushPendingCardPreviewRenders);
+        return;
+    }
+
     renderPreview();
 }
 
@@ -2622,6 +2865,14 @@ function commitBackgroundColorPreview() {
 function changeBackgroundColor(value) {
     applyBackgroundColorPreview(value);
     renderBackgroundPalette();
+    if (isMobileViewport()) {
+        pendingCardPreviewIndexes.add(index);
+        pendingDeferredCardPreviewIndexes.add(index);
+        markMobileTypesettingDirty();
+        schedulePreviewRender(0, flushPendingCardPreviewRenders);
+        return;
+    }
+
     renderPreview();
 }
 
@@ -2688,19 +2939,19 @@ function updateHeadlineFontSelect(selectEl, inputId, selectedValue, resolvedFont
 function changeYearFont(value, selectEl = null) {
     yearFontFamily = value || INHERIT_FONT_VALUE;
     updateHeadlineFontSelect(selectEl, "yearInput", yearFontFamily, resolveYearFontFamily());
-    renderPreview();
+    scheduleMobileFastPreviewRender();
 }
 
 function changeSubtitleFont(value, selectEl = null) {
     subtitleFontFamily = value || INHERIT_FONT_VALUE;
     updateHeadlineFontSelect(selectEl, "subtitleInput", subtitleFontFamily, resolveSubtitleFontFamily());
-    renderPreview();
+    scheduleMobileFastPreviewRender();
 }
 
 function changeSideFont(value, selectEl = null) {
     sideFontFamily = value || INHERIT_FONT_VALUE;
     updateHeadlineFontSelect(selectEl, "sideInput", sideFontFamily, resolveSideFontFamily());
-    renderPreview();
+    scheduleMobileFastPreviewRender();
 }
 
 function changeCardTitleFont(index, value, selectEl = null) {
@@ -2715,7 +2966,7 @@ function changeCardTitleFont(index, value, selectEl = null) {
             titleInput.style.fontFamily = nextFontFamily;
         }
     }
-    renderPreview();
+    scheduleCardPreviewRender(index);
 }
 
 function applyTextColorToElementTree(element) {
@@ -2747,7 +2998,8 @@ function commitTextColorPreview() {
 function changeTextColor(value) {
     applyTextColorPreview(value);
     renderTextColorPalette();
-    renderPreview();
+    schedulePhonePreviewSync();
+    saveState();
 }
 
 function changeLineSpacing(index, value) {
@@ -2813,25 +3065,25 @@ function changeSubtitle(value) {
 function toggleTimeline() {
     showTimeline = !showTimeline;
     updateTimelineButtons();
-    renderPreview();
+    scheduleMobileFastPreviewRender();
 }
 
 function toggleMonthTitles() {
     showMonthTitles = !showMonthTitles;
     updateTimelineButtons();
-    renderPreview();
+    scheduleMobileFastPreviewRender();
 }
 
 function toggleMonthUnderlines() {
     showMonthUnderlines = !showMonthUnderlines;
     updateTimelineButtons();
-    renderPreview();
+    scheduleMobileFastPreviewRender();
 }
 
 function toggleSideHeader() {
     showSideHeader = !showSideHeader;
     updateTimelineButtons();
-    renderPreview();
+    scheduleMobileFastPreviewRender();
 }
 
 function toggleBottomWatermark() {
@@ -2842,7 +3094,7 @@ function toggleBottomWatermark() {
 
 function toggleSubtitlePosition() {
     subtitlePosition = subtitlePosition === "verticalLeft" ? "belowTitle" : "verticalLeft";
-    renderPreview();
+    scheduleMobileFastPreviewRender();
 }
 
 function togglePhonePreview() {
@@ -2892,14 +3144,14 @@ function addCard() {
         lineSpacing: 1.8,
         paragraphSpacing: 0
     });
-    render();
+    renderLayoutChangePreview();
 }
 
 function toggleCardHidden(index) {
     if (!data[index]) return;
 
     data[index].hidden = !data[index].hidden;
-    render();
+    renderLayoutChangePreview();
 }
 
 function deleteCard(index) {
@@ -2907,7 +3159,7 @@ function deleteCard(index) {
     if (!ok) return;
 
     data.splice(index, 1);
-    render();
+    renderLayoutChangePreview();
 }
 
 /* ===========================
@@ -3164,6 +3416,7 @@ function handleViewportChange() {
 
     scheduleViewportResizeCompletion();
     syncPreviewExportActionsPosition();
+    updateMobileTypesetRefreshButton();
 }
 
 const previewScrollContainer = document.getElementById("preview");
@@ -3172,7 +3425,7 @@ if (previewScrollContainer) {
 }
 
 window.addEventListener("resize", handleViewportChange);
-window.addEventListener("beforeunload", flushPendingStateSave);
+window.addEventListener("beforeunload", flushPendingInputAndState);
 
 if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", handleViewportChange);
@@ -3469,8 +3722,11 @@ function renderVerticalTextForExport(clonedDoc) {
 }
 
 async function capturePosterCanvas({ hideCopyright = false, scale = 3, afterCapture = null, transparentPosterBackground = false } = {}) {
+    flushPendingMobileTextInputs();
     await flushPendingPreviewRender();
+    await flushDeferredCardTypesetting();
     await flushDeferredPosterTypesetting();
+    await flushMobileTypesettingIfNeeded();
 
     const exportState = preparePosterForExport();
     if (!exportState) return Promise.reject(new Error("未找到预览区域，无法导出。"));
@@ -4180,6 +4436,7 @@ async function exportSlicedImagesZip() {
 
 loadState();
 setMobileEditorPanel(activeMobileEditorPanel);
+updateMobileTypesetRefreshButton();
 
 if (typeof editorWidth === "number") {
     editor.style.width = editorWidth + "px";
