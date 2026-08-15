@@ -68,6 +68,7 @@ const phoneResolutions = {
     "1290x2796": { width: 1290, height: 2796, cssWidth: 430 },
     "1080x2400": { width: 1080, height: 2400, cssWidth: 360 }
 };
+let activeMobileEditorPanel = "style";
 
 function getViewportSize() {
     const viewport = window.visualViewport;
@@ -96,6 +97,21 @@ function applyResponsiveViewport() {
 
     root.style.setProperty("--mobile-poster-width", `${Math.round(width)}px`);
     root.style.setProperty("--mobile-preview-height", `${Math.round(height * 0.58)}px`);
+}
+
+function setMobileEditorPanel(panelName = "style") {
+    const nextPanel = ["style", "text", "blocks", "export"].includes(panelName) ? panelName : "style";
+    activeMobileEditorPanel = nextPanel;
+
+    document.querySelectorAll("[data-mobile-tab]").forEach((tab) => {
+        const isActive = tab.dataset.mobileTab === nextPanel;
+        tab.classList.toggle("active", isActive);
+        tab.setAttribute("aria-selected", String(isActive));
+    });
+
+    document.querySelectorAll("[data-mobile-panel]").forEach((panel) => {
+        panel.classList.toggle("mobilePanelActive", panel.dataset.mobilePanel === nextPanel);
+    });
 }
 
 function getPreviewFontScale() {
@@ -3516,8 +3532,6 @@ async function capturePosterCanvas({ hideCopyright = false, scale = 3, afterCapt
 }
 
 async function exportImage() {
-    const mobileFallbackWindow = isLikelyMobileBrowser() ? window.open("", "_blank") : null;
-
     try {
         const sourceCanvas = await capturePosterCanvas({
             hideCopyright: !showBottomWatermark,
@@ -3529,12 +3543,8 @@ async function exportImage() {
         const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
         const canvas = await addCanvasTopPadding(sourceCanvas, topPaddingHeight, posterStyle.backgroundColor || backgroundColor);
         const blob = await canvasToBlob(canvas, "image/jpeg", 1);
-        downloadBlob(blob, "年度总结.jpg", { fallbackWindow: mobileFallbackWindow });
+        downloadBlob(blob, "年度总结.jpg");
     } catch (error) {
-        if (mobileFallbackWindow && !mobileFallbackWindow.closed) {
-            mobileFallbackWindow.close();
-        }
-
         window.alert(error?.message || "导出失败，请稍后再试。");
     }
 }
@@ -3626,8 +3636,6 @@ function downloadBlob(blob, filename, { fallbackWindow = null } = {}) {
     window.setTimeout(() => {
         if (fallbackWindow && !fallbackWindow.closed) {
             fallbackWindow.location.href = url;
-        } else if (isLikelyMobileBrowser()) {
-            window.open(url, "_blank", "noopener");
         }
 
         window.setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
@@ -4157,7 +4165,8 @@ async function exportSlicedImagesZip() {
             button.innerText = "正在打包...";
         }
         const zipBlob = await zip.generateAsync({ type: "blob" });
-        downloadBlob(zipBlob, "年度总结-已切图jpg.zip");
+        const filename = "年度总结-已切图jpg.zip";
+        downloadBlob(zipBlob, filename);
     } catch (error) {
         window.alert(error?.message || "切图导出失败，请稍后再试。");
     } finally {
@@ -4170,6 +4179,7 @@ async function exportSlicedImagesZip() {
 =========================== */
 
 loadState();
+setMobileEditorPanel(activeMobileEditorPanel);
 
 if (typeof editorWidth === "number") {
     editor.style.width = editorWidth + "px";

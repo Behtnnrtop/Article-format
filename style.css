@@ -517,6 +517,10 @@ body.editorCollapsed #dragBar{
     justify-content:flex-end;
 }
 
+.mobileEditorTabs{
+    display:none;
+}
+
 #timelineToggleBtn,
 #bottomWatermarkToggleBtn,
 #monthTitleToggleBtn,
@@ -1373,6 +1377,8 @@ button:hover{
     }
 
     #editor{
+        display:flex;
+        flex-direction:column;
         flex:1 1 auto;
         width:100% !important;
         min-width:0;
@@ -1385,23 +1391,102 @@ button:hover{
         border-top:1px solid rgba(17,24,39,.08);
         border-radius:18px 18px 0 0;
         box-shadow:0 -12px 28px rgba(15,23,42,.08);
+        -webkit-overflow-scrolling:touch;
+        overscroll-behavior:contain;
+        touch-action:pan-y;
     }
 
     body.editorCollapsed #editor{
         display:block;
     }
 
+    #editor::before{
+        display:none;
+    }
+
+    .mobileEditorTabs{
+        order:1;
+        position:sticky;
+        top:0;
+        z-index:5;
+        display:grid;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        gap:6px;
+        margin:0 -16px 14px;
+        padding:0 16px 12px;
+        background:#ffffff;
+        border-bottom:1px solid rgba(17,24,39,.08);
+        box-shadow:0 8px 14px rgba(15,23,42,.06);
+    }
+
+    .mobileEditorTab{
+        min-width:0;
+        min-height:38px;
+        margin:0;
+        padding:8px 6px;
+        border:1px solid #dbe2ee;
+        border-radius:10px;
+        color:#536075;
+        background:#f8fafc;
+        font-size:14px;
+        font-weight:700;
+        line-height:1;
+    }
+
+    .mobileEditorTab.active{
+        color:#ffffff;
+        border-color:#2f5fbb;
+        background:#2f5fbb;
+        box-shadow:0 6px 14px rgba(47,95,187,.22);
+    }
+
+    [data-mobile-panel]{
+        order:3;
+        display:none !important;
+    }
+
+    [data-mobile-panel].mobilePanelActive{
+        display:block !important;
+    }
+
+    .editorHeaderActions.mobilePanelActive{
+        order:2;
+        display:flex !important;
+    }
+
     .mobileExportBtn{
         display:block;
     }
 
+    .mobileExportBtn[data-mobile-panel]:not(.mobilePanelActive){
+        display:none;
+    }
+
+    #exportSlicesBtn.mobileExportBtn{
+        display:none !important;
+    }
+
     .editorHeader{
-        align-items:flex-start;
-        flex-direction:column;
+        display:contents;
+    }
+
+    .editorHeader h2{
+        order:0;
+        margin-bottom:14px;
     }
 
     .editorHeaderActions{
+        margin:0 0 14px;
         justify-content:flex-start;
+    }
+
+    .richTextBox{
+        max-height:none;
+        overflow:visible;
+    }
+
+    .richTextToolbar{
+        position:static;
     }
 
     .editItem,

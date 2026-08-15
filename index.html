@@ -34,7 +34,7 @@
     <div id="editor">
         <div class="editorHeader">
             <h2>编辑器</h2>
-            <div class="editorHeaderActions">
+            <div class="editorHeaderActions" data-mobile-panel="text">
                 <button id="bottomWatermarkToggleBtn" type="button" onclick="toggleBottomWatermark()">隐藏底部水印</button>
                 <button id="timelineToggleBtn" type="button" onclick="toggleTimeline()">隐藏时间轴</button>
                 <button id="monthTitleToggleBtn" type="button" onclick="toggleMonthTitles()">隐藏段落标题</button>
@@ -44,7 +44,14 @@
             </div>
         </div>
 
-        <div class="editItem phoneResolutionPanel">
+        <div class="mobileEditorTabs" role="tablist" aria-label="手机属性分组">
+            <button type="button" class="mobileEditorTab active" data-mobile-tab="style" role="tab" aria-selected="true" onclick="setMobileEditorPanel('style')">总样式</button>
+            <button type="button" class="mobileEditorTab" data-mobile-tab="text" role="tab" aria-selected="false" onclick="setMobileEditorPanel('text')">标题</button>
+            <button type="button" class="mobileEditorTab" data-mobile-tab="blocks" role="tab" aria-selected="false" onclick="setMobileEditorPanel('blocks')">段落</button>
+            <button type="button" class="mobileEditorTab" data-mobile-tab="export" role="tab" aria-selected="false" onclick="setMobileEditorPanel('export')">导出</button>
+        </div>
+
+        <div class="editItem phoneResolutionPanel" data-mobile-panel="export">
             <label for="phoneResolutionSelect">导出手机分辨率</label>
             <select id="phoneResolutionSelect" class="phoneResolutionSelect">
                 <option value="1080x2376">1080 × 2376</option>
@@ -55,10 +62,10 @@
             <div class="resolutionHint">手机预览和切图导出会按当前分辨率实时渲染</div>
         </div>
 
-        <button id="exportBtn" class="mobileExportBtn" onclick="exportImage()">导出长图</button>
-        <button id="exportSlicesBtn" class="mobileExportBtn" onclick="exportSlicedImagesZip()">导出已切图</button>
+        <button id="exportBtn" class="mobileExportBtn" data-mobile-panel="export" onclick="exportImage()">导出长图</button>
+        <button id="exportSlicesBtn" class="mobileExportBtn" data-mobile-panel="export" onclick="exportSlicedImagesZip()">导出已切图</button>
 
-        <div class="editItem">
+        <div class="editItem" data-mobile-panel="style">
             <label>背景颜色</label>
             <div id="bgPalette" class="bgPalette"></div>
             <input type="color" id="customColorPicker" value="#efefef" class="hiddenColorPicker">
@@ -74,13 +81,13 @@
             </div>
         </div>
 
-        <div class="editItem">
+        <div class="editItem" data-mobile-panel="style">
             <label>字体颜色</label>
             <div id="textColorPalette" class="bgPalette"></div>
             <input type="color" id="textColorPicker" value="#111111" class="hiddenColorPicker">
         </div>
 
-        <div class="editItem">
+        <div class="editItem" data-mobile-panel="style">
             <div class="spacingControls">
                 <label for="sideSpacingInput">
                     两侧间距
@@ -105,12 +112,12 @@
             </div>
         </div>
 
-        <div class="editItem fontLoaderPanel">
+        <div class="editItem fontLoaderPanel" data-mobile-panel="style">
             <button id="loadFontsBtn" type="button">读取本机字体</button>
             <div id="fontStatus" class="fontStatus"></div>
         </div>
 
-        <div class="editItem">
+        <div class="editItem" data-mobile-panel="text">
             <label>
                 顶部标题
                 <button onclick="changeYearSize(-2)">A-</button>
@@ -121,7 +128,7 @@
             <textarea id="yearInput" rows="2">输入标题</textarea>
         </div>
 
-        <div class="editItem">
+        <div class="editItem" data-mobile-panel="text">
             <label>
                 作者
                 <button onclick="changeSubtitleSize(-1)">A-</button>
@@ -133,7 +140,7 @@
             <textarea id="subtitleInput" rows="2">作者：</textarea>
         </div>
 
-        <div class="editItem">
+        <div class="editItem" data-mobile-panel="text">
             <label>
                 右侧竖排标题
                 <button onclick="changeSideSize(-2)">A-</button>
@@ -144,9 +151,9 @@
             <textarea id="sideInput" rows="2">输入竖排标题</textarea>
         </div>
 
-        <button id="addBtn" onclick="addCard()">＋ 新增段落</button>
+        <button id="addBtn" data-mobile-panel="blocks" onclick="addCard()">＋ 新增段落</button>
 
-        <div id="cardEditor"></div>
+        <div id="cardEditor" data-mobile-panel="blocks"></div>
     </div>
 
     <div id="phonePreviewPanel" class="phonePreviewPanel" hidden>
