@@ -1,7 +1,7 @@
 (function registerSlicedZipDelivery() {
     "use strict";
 
-    const EXPORT_API_BASE_URL = "https://article-format-api.workers.dev";
+    const EXPORT_API_BASE_URL = "https://article-format.com";
     const DEVICE_ID_STORAGE_KEY = "articleSummaryExportDeviceId";
     const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     let sessionDeviceId = "";
