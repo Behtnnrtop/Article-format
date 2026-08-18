@@ -11,16 +11,18 @@
         <div id="posterTypesettingOverlay" class="posterTypesettingOverlay visible" aria-hidden="false">
             <div class="posterTypesettingMessage">正在排版...</div>
         </div>
-        <div id="poster">
-            <div id="header">
-                <div id="year">输入标题</div>
+        <div id="poster" class="posterRoot">
+            <div id="header" class="posterHeader" data-poster-part="header">
+                <div id="year" class="posterYear" data-poster-part="year">输入标题</div>
             </div>
-            <div id="subtitle">作者：</div>
-            <div id="side">竖排标题</div>
-            <div id="cards"></div>
-            <div id="copyright">制图：@Behtnnrtop</div>
+            <div id="subtitle" class="posterSubtitle" data-poster-part="subtitle">作者：</div>
+            <div id="side" class="posterSide" data-poster-part="side">竖排标题</div>
+            <div id="cards" class="posterCards" data-poster-part="cards"></div>
+            <div id="copyright" class="posterCopyright" data-poster-part="copyright">制图：@Behtnnrtop</div>
         </div>
     </div>
+
+    <div id="phoneRenderHost" class="phoneRenderHost" aria-hidden="true"></div>
 
     <div class="previewExportActions" aria-label="导出图片">
         <button id="previewExportBtn" class="previewExportBtn" type="button" onclick="exportImage()">导出长图</button>
@@ -56,12 +58,16 @@
         <div class="editItem phoneResolutionPanel" data-mobile-panel="export">
             <label for="phoneResolutionSelect">导出手机分辨率</label>
             <select id="phoneResolutionSelect" class="phoneResolutionSelect">
+                <option value="720x1600">720 × 1600</option>
+                <option value="1080x1920">1080 × 1920</option>
                 <option value="1080x2376">1080 × 2376</option>
-                <option value="1170x2532">1170 × 2532</option>
-                <option value="1290x2796">1290 × 2796</option>
                 <option value="1080x2400">1080 × 2400</option>
+                <option value="1170x2532">1170 × 2532</option>
+                <option value="1220x2712">1220 × 2712</option>
+                <option value="1290x2796">1290 × 2796</option>
+                <option value="1440x3200">1440 × 3200</option>
             </select>
-            <div class="resolutionHint">手机预览和切图导出会按当前分辨率实时渲染</div>
+            <div class="resolutionHint">手机预览、长图和切图导出会按当前分辨率实时渲染</div>
         </div>
 
         <button id="exportBtn" class="mobileExportBtn" data-mobile-panel="export" onclick="exportImage()">导出长图</button>
@@ -189,5 +195,6 @@
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="script.js?v=13"></script>
+    <script src="r2-export.js?v=1"></script>
 </body>
 </html>

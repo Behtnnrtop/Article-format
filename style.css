@@ -29,7 +29,7 @@ body{
     position:relative;
 }
 
-#poster{
+.posterRoot{
     position:relative;
     width:100%;
     background:#efefef;
@@ -81,25 +81,25 @@ body{
     display:none;
 }
 
-#header,
-#subtitle,
-#cards,
-#copyright{
+.posterHeader,
+.posterSubtitle,
+.posterCards,
+.posterCopyright{
     position:relative;
     z-index:1;
 }
 
-#side{
+.posterSide{
     z-index:1;
 }
 
-#header{
+.posterHeader{
     display:inline-flex;
     max-width:var(--headline-title-max-width, calc(100% - 70px - var(--text-side-spacing,0px) - var(--text-side-spacing,0px)));
     margin-left:var(--text-side-spacing,0px);
 }
 
-#year{
+.posterYear{
     /* --year-marker-height:80%;
     --year-marker-width:100%;
     --year-marker-bottom:-0.3em;
@@ -120,7 +120,7 @@ body{
     overflow-wrap:anywhere;
 }
 
-#year::before{
+.posterYear::before{
     content:attr(data-shadow-text);
     position:absolute;
     left:var(--year-shadow-left);
@@ -135,7 +135,7 @@ body{
     pointer-events:none;
 }
 
-#year::after{
+.posterYear::after{
     content:"";
     position:absolute;
     left:var(--year-marker-left);
@@ -147,7 +147,7 @@ body{
     pointer-events:none;
 }
 
-#subtitle{
+.posterSubtitle{
     margin-top:var(--subtitle-gap-to-title,12px);
     margin-left:calc(var(--subtitle-title-indent,18px) + var(--text-side-spacing,0px));
     font-family:var(--subtitle-font-family,inherit);
@@ -186,7 +186,7 @@ body{
     display:inline;
 }
 
-#poster.subtitleVerticalLeft #subtitle{
+.posterRoot.subtitleVerticalLeft .posterSubtitle{
     position:absolute;
     top:var(--subtitle-vertical-top,40px);
     right:var(--subtitle-vertical-right,86px);
@@ -198,7 +198,7 @@ body{
     text-orientation:mixed;
 }
 
-#side{
+.posterSide{
     position:absolute;
     top:40px;
     right:calc(50px + var(--text-side-spacing,0px) + var(--side-header-reserve,0px));
@@ -248,7 +248,7 @@ body{
     --vertical-parenthesis-offset-y:0;
 }
 
-#cards{
+.posterCards{
     width:100%;
     margin-top:0;
 }
@@ -260,34 +260,34 @@ body{
     width:100%;
 }
 
-#poster.noTimeline .card{
+.posterRoot.noTimeline .card{
     width:calc(100%);
     padding-left:0;
     margin-left:0px;
     margin-top:max(0px, calc(var(--module-spacing,58px) - 18px));
 }
 
-#poster.hideMonthTitles .card{
+.posterRoot.hideMonthTitles .card{
     margin-top:max(0px, calc(var(--module-spacing,58px) - 38px));
 }
 
-#poster.hideMonthTitles .cardTitle{
+.posterRoot.hideMonthTitles .cardTitle{
     display:none;
 }
 
-#poster.hideMonthUnderlines .cardTitle::after{
+.posterRoot.hideMonthUnderlines .cardTitle::after{
     display:none;
 }
 
-#poster.hideSideHeader #side{
+.posterRoot.hideSideHeader .posterSide{
     display:none;
 }
 
-#poster.hideSideHeader #header{
+.posterRoot.hideSideHeader .posterHeader{
     max-width:calc(100% - var(--text-side-spacing,0px) - var(--text-side-spacing,0px));
 }
 
-#poster.hideSideHeader #cards{
+.posterRoot.hideSideHeader .posterCards{
     max-width:100%;
     width:100%;
 }
@@ -314,8 +314,8 @@ body{
     box-shadow:0 0 0 3px rgba(255,255,255,.45);
 }
 
-#poster.noTimeline .card::before,
-#poster.noTimeline .card::after{
+.posterRoot.noTimeline .card::before,
+.posterRoot.noTimeline .card::after{
     display:none;
 }
 
@@ -351,7 +351,7 @@ body{
     padding:0;
 }
 
-#poster.hideSideHeader .cardContent{
+.posterRoot.hideSideHeader .cardContent{
     width:100%;
 }
 
@@ -392,7 +392,7 @@ body{
     margin-bottom:var(--content-paragraph-spacing,0px);
 }
 
-#copyright{
+.posterCopyright{
     position:relative;
     display:block;
     width:fit-content;
@@ -652,6 +652,58 @@ body.editorCollapsed #dragBar{
     color:#8b93a7;
     font-size:12px;
     line-height:1.5;
+}
+
+.phoneRenderHost{
+    position:fixed;
+    left:-100000px;
+    top:0;
+    width:360px;
+    min-height:0;
+    pointer-events:none;
+    z-index:-1;
+}
+
+.phoneRenderPoster{
+    width:100%;
+    margin:0;
+    padding:28px 24px 30px;
+    min-height:0;
+}
+
+.phoneRenderPoster .posterHeader{
+    max-width:calc(100% - 52px);
+}
+
+.phoneRenderPoster .posterYear{
+    padding:8px 12px;
+}
+
+.phoneRenderPoster .posterSubtitle{
+    margin-top:var(--subtitle-gap-to-title,10px);
+    margin-left:calc(var(--subtitle-title-indent,12px) + var(--text-side-spacing,0px));
+    letter-spacing:var(--subtitle-letter-spacing,.28em);
+}
+
+.phoneRenderPoster.subtitleVerticalLeft .posterSubtitle{
+    top:var(--subtitle-vertical-top,28px);
+}
+
+.phoneRenderPoster .posterSide{
+    top:28px;
+    right:calc(20px + var(--text-side-spacing,0px) + var(--side-header-reserve,0px));
+}
+
+.phoneRenderPoster .card{
+    padding-left:34px;
+}
+
+.phoneRenderPoster .card::before{
+    left:10px;
+}
+
+.phoneRenderPoster .card::after{
+    left:5px;
 }
 
 .phoneMockup{
@@ -1310,40 +1362,40 @@ button:hover{
         background:#f5f5f5;
     }
 
-    #poster{
+    .posterRoot{
         width:var(--mobile-poster-width,100vw);
         margin:0 auto;
         padding:28px 24px 30px;
     }
 
-    #header{
+    .posterHeader{
         max-width:calc(100% - 52px);
     }
 
-    #year{
+    .posterYear{
         padding:8px 12px;
     }
 
-    #subtitle{
+    .posterSubtitle{
         margin-top:var(--subtitle-gap-to-title,10px);
         margin-left:calc(var(--subtitle-title-indent,12px) + var(--text-side-spacing,0px));
         letter-spacing:var(--subtitle-letter-spacing,.28em);
     }
 
-    #poster.subtitleVerticalLeft #subtitle{
+    .posterRoot.subtitleVerticalLeft .posterSubtitle{
         top:var(--subtitle-vertical-top,28px);
     }
 
-    #side{
+    .posterSide{
         top:28px;
         right:calc(20px + var(--text-side-spacing,0px) + var(--side-header-reserve,0px));
     }
 
-    #cards{
+    .posterCards{
         width:100%;
     }
 
-    #poster.hideSideHeader #cards{
+    .posterRoot.hideSideHeader .posterCards{
         width:100%;
     }
 
@@ -1351,7 +1403,7 @@ button:hover{
         width:100%;
     }
 
-    #poster.hideSideHeader .cardContent{
+    .posterRoot.hideSideHeader .cardContent{
         width:100%;
     }
 
@@ -1504,10 +1556,6 @@ button:hover{
 
     .mobileExportBtn{
         display:block;
-    }
-
-    #exportSlicesBtn.mobileExportBtn{
-        display:none !important;
     }
 
     .editorHeader{

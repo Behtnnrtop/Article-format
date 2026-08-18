@@ -63,10 +63,14 @@ const SUBTITLE_SETTINGS = Object.freeze({
 });
 
 const phoneResolutions = {
+    "720x1600": { width: 720, height: 1600, cssWidth: 360 },
+    "1080x1920": { width: 1080, height: 1920, cssWidth: 360 },
     "1080x2376": { width: 1080, height: 2376, cssWidth: 360 },
+    "1080x2400": { width: 1080, height: 2400, cssWidth: 360 },
     "1170x2532": { width: 1170, height: 2532, cssWidth: 390 },
+    "1220x2712": { width: 1220, height: 2712, cssWidth: 407 },
     "1290x2796": { width: 1290, height: 2796, cssWidth: 430 },
-    "1080x2400": { width: 1080, height: 2400, cssWidth: 360 }
+    "1440x3200": { width: 1440, height: 3200, cssWidth: 480 }
 };
 let activeMobileEditorPanel = "style";
 
@@ -121,13 +125,41 @@ function getPreviewFontScale() {
     return Math.min(Math.max(resolutionScale, MIN_PREVIEW_FONT_SCALE), MAX_PREVIEW_FONT_SCALE);
 }
 
+function getPhoneExportCssWidth(resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"]) {
+    const cssWidth = Number(resolution?.cssWidth);
+    return Math.max(1, Math.round(Number.isFinite(cssWidth) ? cssWidth : 360));
+}
+
+function getPhoneExportScale(resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"]) {
+    return resolution.width / getPhoneExportCssWidth(resolution);
+}
+
+function getLongImageExportScale(
+    poster,
+    resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"],
+    preferredScale = LONG_IMAGE_EXPORT_SCALE
+) {
+    if (!isLikelyMobileBrowser()) return preferredScale;
+
+    const posterWidth = poster?.offsetWidth || getPhoneExportCssWidth(resolution);
+    const posterHeight = poster?.scrollHeight || poster?.offsetHeight || resolution.height;
+    const outputWidth = posterWidth * preferredScale;
+    const outputHeight = posterHeight * preferredScale + getExportTopPaddingHeight(resolution, preferredScale);
+    const outputPixels = outputWidth * outputHeight;
+
+    return outputPixels > MOBILE_LONG_IMAGE_SCALE_PIXEL_LIMIT
+        ? Math.min(preferredScale, MOBILE_LONG_IMAGE_FALLBACK_SCALE)
+        : preferredScale;
+}
+
 function getResolutionDesignScale() {
     const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
     return resolution.width / BASE_RESOLUTION_WIDTH;
 }
 
-function getSubtitleSettings(previewFontScale = getPreviewFontScale()) {
-    const responsiveSettings = isMobileViewport()
+function getSubtitleSettings(previewFontScale = getPreviewFontScale(), element = null) {
+    const isPhoneRender = Boolean(element?.closest(".phoneRenderPoster"));
+    const responsiveSettings = isPhoneRender || isMobileViewport()
         ? SUBTITLE_SETTINGS.mobile
         : SUBTITLE_SETTINGS.desktop;
     const fontSizePx = globalFont.subtitle * previewFontScale;
@@ -151,7 +183,7 @@ function getSubtitleSettings(previewFontScale = getPreviewFontScale()) {
 function applySubtitleSettings(element, previewFontScale = getPreviewFontScale()) {
     if (!element) return null;
 
-    const settings = getSubtitleSettings(previewFontScale);
+    const settings = getSubtitleSettings(previewFontScale, element);
     element.style.setProperty("--subtitle-font-family", settings.fontFamily);
     element.style.setProperty("--subtitle-font-size", `${settings.fontSizePx}px`);
     element.style.setProperty("--subtitle-font-weight", settings.fontWeight);
@@ -274,6 +306,11 @@ let data = [
 let editorWidth = null;
 let editorCollapsed = false;
 let phonePreviewFrame = null;
+let phonePreviewSyncInProgress = false;
+let pendingPhonePreviewSync = false;
+let phoneRenderPoster = null;
+let phoneRenderLayoutSignature = "";
+let phoneRenderLayoutPromise = null;
 let isInitializing = true;
 let editorRenderFrame = null;
 let backgroundImageCanvasCache = {
@@ -718,6 +755,9 @@ const TYPESETTING_OVERLAY_DELAY_MS = 0;
 const TYPESETTING_OVERLAY_MIN_VISIBLE_MS = 0;
 const STATE_SAVE_DEBOUNCE_MS = 350;
 const MOBILE_TEXT_INPUT_COMMIT_DELAY_MS = 520;
+const LONG_IMAGE_EXPORT_SCALE = 3;
+const MOBILE_LONG_IMAGE_FALLBACK_SCALE = 2;
+const MOBILE_LONG_IMAGE_SCALE_PIXEL_LIMIT = 24 * 1000 * 1000;
 
 let typesetMeasureLayer = null;
 let pendingPreviewRenderTimer = null;
@@ -1247,6 +1287,33 @@ function hideTypesettingOverlay() {
     typesettingOverlayShownAt = 0;
 }
 
+function showExportOverlay(message = "正在导出...") {
+    const overlay = getPosterTypesettingOverlay();
+    const wasVisible = overlay?.classList.contains("visible") || false;
+    const oldAriaHidden = overlay?.getAttribute("aria-hidden") || "true";
+    const messageElement = overlay?.querySelector(".posterTypesettingMessage");
+    const oldMessage = messageElement?.textContent || "正在排版...";
+
+    showTypesettingOverlayNow(message);
+
+    return () => {
+        cancelPendingTypesettingOverlay();
+        cancelPendingTypesettingOverlayHide();
+
+        if (messageElement) {
+            messageElement.textContent = oldMessage;
+        }
+
+        if (overlay && wasVisible) {
+            overlay.classList.add("visible");
+            overlay.setAttribute("aria-hidden", oldAriaHidden);
+            return;
+        }
+
+        hideTypesettingOverlay();
+    };
+}
+
 async function runPosterTypesettingCompletion({ shouldSave = true, hideOverlay = true } = {}) {
     pendingPosterTypesetTask = null;
     applyPosterTypesetting();
@@ -1316,10 +1383,16 @@ function getTypesetAvailableWidth(element) {
     return Math.max(1, Math.min(ownWidth || parentWidth, parentWidth || ownWidth));
 }
 
-function syncHeadlineTextWidths() {
-    const poster = document.getElementById("poster");
-    const side = document.getElementById("side");
-    const subtitle = document.getElementById("subtitle");
+function getPosterPart(poster, part) {
+    if (!poster) return null;
+
+    return poster.querySelector(`[data-poster-part="${part}"]`)
+        || poster.querySelector(`.poster${part[0].toUpperCase()}${part.slice(1)}`);
+}
+
+function syncHeadlineTextWidths(poster = document.getElementById("poster")) {
+    const side = getPosterPart(poster, "side");
+    const subtitle = getPosterPart(poster, "subtitle");
     if (!poster) return;
 
     const posterStyle = window.getComputedStyle(poster);
@@ -1566,17 +1639,21 @@ function typesetSingleLineFirstElement(element, options = {}) {
     element.appendChild(createTypesetLineElement(tokens, adjustment));
 }
 
-function applyPosterTypesetting() {
-    typesetTextElement(document.getElementById("year"));
+function applyPosterTypesetting(poster = document.getElementById("poster")) {
+    const year = getPosterPart(poster, "year");
+    const subtitle = getPosterPart(poster, "subtitle");
+    const cards = getPosterPart(poster, "cards");
+
+    typesetTextElement(year);
 
     if (subtitlePosition !== "verticalLeft") {
-        typesetSingleLineFirstElement(document.getElementById("subtitle"), {
+        typesetSingleLineFirstElement(subtitle, {
             minSpacing: SUBTITLE_MIN_SINGLE_LINE_SPACING,
             minScale: SUBTITLE_MIN_SINGLE_LINE_SCALE
         });
     }
 
-    document.querySelectorAll(".card").forEach(applyCardTypesetting);
+    cards?.querySelectorAll(".card").forEach(applyCardTypesetting);
 }
 
 function applyCardTypesetting(card) {
@@ -1614,7 +1691,6 @@ function buildPersistedState() {
         sideSpacing,
         paragraphTitleSpacing,
         moduleSpacing,
-        topPadding,
         sideHeaderReserve,
         showTimeline,
         showMonthTitles,
@@ -1876,6 +1952,15 @@ function renderPreviewCard(item, index, previewFontScale = getPreviewFontScale()
         `;
 }
 
+function renderPosterCards(poster, previewFontScale = getPreviewFontScale()) {
+    const cards = getPosterPart(poster, "cards");
+    if (!cards) return;
+
+    cards.innerHTML = data
+        .map((item, index) => item.hidden ? "" : renderPreviewCard(item, index, previewFontScale))
+        .join("");
+}
+
 function renderPreviewCardByIndex(index, { deferTypesetting = false } = {}) {
     const item = data[index];
     const existingCard = document.querySelector(`#cards .card[data-card-index="${index}"]`);
@@ -1983,7 +2068,28 @@ function renderAuxiliaryControls() {
     updateTimelineButtons();
 }
 
-async function renderPreview({ updateControls = false, shouldSave = true, deferTypesetting = false, hideOverlayWhenReady = false, scheduleDeferredTypesetting = true } = {}) {
+function applyPosterContainerState(poster) {
+    if (!poster) return;
+
+    poster.style.backgroundColor = backgroundColor;
+    poster.style.backgroundImage = "";
+    poster.style.backgroundSize = "";
+    poster.style.backgroundPosition = "";
+    poster.style.backgroundRepeat = "";
+    poster.style.fontFamily = fontFamily;
+    poster.style.setProperty("--text-color", textColor);
+    poster.style.setProperty("--text-side-spacing", `${sideSpacing}px`);
+    poster.style.setProperty("--side-header-reserve", `${sideHeaderReserve}px`);
+    poster.style.setProperty("--card-title-spacing", `${paragraphTitleSpacing}px`);
+    poster.style.setProperty("--module-spacing", `${moduleSpacing}px`);
+    poster.classList.toggle("noTimeline", !showTimeline);
+    poster.classList.toggle("hideMonthTitles", !showMonthTitles);
+    poster.classList.toggle("hideMonthUnderlines", !showMonthUnderlines);
+    poster.classList.toggle("hideSideHeader", !showSideHeader);
+    poster.classList.toggle("subtitleVerticalLeft", subtitlePosition === "verticalLeft");
+}
+
+async function renderPreview({ updateControls = false, shouldSave = true, deferTypesetting = false, hideOverlayWhenReady = false, scheduleDeferredTypesetting = true, schedulePhonePreview = true } = {}) {
     const shouldManualMobileTypeset = isMobileViewport() && deferTypesetting;
 
     cancelDeferredPosterTypesetting();
@@ -2030,22 +2136,7 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
     const poster = document.getElementById("poster");
     if (poster) {
         ensurePosterBackgroundCanvas(poster);
-        poster.style.backgroundColor = backgroundColor;
-        poster.style.backgroundImage = "";
-        poster.style.backgroundSize = "";
-        poster.style.backgroundPosition = "";
-        poster.style.backgroundRepeat = "";
-        poster.style.fontFamily = fontFamily;
-        poster.style.setProperty("--text-color", textColor);
-        poster.style.setProperty("--text-side-spacing", `${sideSpacing}px`);
-        poster.style.setProperty("--side-header-reserve", `${sideHeaderReserve}px`);
-        poster.style.setProperty("--card-title-spacing", `${paragraphTitleSpacing}px`);
-        poster.style.setProperty("--module-spacing", `${moduleSpacing}px`);
-        poster.classList.toggle("noTimeline", !showTimeline);
-        poster.classList.toggle("hideMonthTitles", !showMonthTitles);
-        poster.classList.toggle("hideMonthUnderlines", !showMonthUnderlines);
-        poster.classList.toggle("hideSideHeader", !showSideHeader);
-        poster.classList.toggle("subtitleVerticalLeft", subtitlePosition === "verticalLeft");
+        applyPosterContainerState(poster);
     }
 
     const subtitleElement = document.getElementById("subtitle");
@@ -2067,15 +2158,7 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
         copyrightEl.style.display = showBottomWatermark ? "" : "none";
     }
 
-    let html = "";
-
-    data.forEach((item, index) => {
-        if (item.hidden) return;
-
-        html += renderPreviewCard(item, index, previewFontScale);
-    });
-
-    document.getElementById("cards").innerHTML = html;
+    renderPosterCards(poster, previewFontScale);
 
     if (deferTypesetting) {
         if (shouldManualMobileTypeset) {
@@ -2128,7 +2211,7 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
     }
 
     syncPreviewExportActionsPosition();
-    if (!deferTypesetting) {
+    if (!deferTypesetting && schedulePhonePreview) {
         schedulePhonePreviewSync();
     }
 
@@ -2148,12 +2231,161 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
     }
 }
 
-function syncCardsOffset() {
-    const poster = document.getElementById("poster");
-    const cards = document.getElementById("cards");
-    const side = document.getElementById("side");
-    const subtitle = document.getElementById("subtitle");
-    const header = document.getElementById("header");
+async function flushPendingPosterWork() {
+    flushPendingMobileTextInputs();
+    await flushPendingPreviewRender();
+    await flushDeferredCardTypesetting();
+    await flushDeferredPosterTypesetting();
+    await flushMobileTypesettingIfNeeded();
+}
+
+function getPhoneRenderSignature() {
+    const yearInput = document.getElementById("yearInput");
+    const sideInput = document.getElementById("sideInput");
+    const subtitleInputElement = document.getElementById("subtitleInput");
+    const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
+
+    return JSON.stringify({
+        globalFont,
+        data,
+        backgroundColor,
+        textColor,
+        fontFamily,
+        yearFontFamily,
+        subtitleFontFamily,
+        sideFontFamily,
+        lineSpacing,
+        paragraphSpacing,
+        sideSpacing,
+        paragraphTitleSpacing,
+        moduleSpacing,
+        topPadding,
+        sideHeaderReserve,
+        showTimeline,
+        showMonthTitles,
+        showMonthUnderlines,
+        showSideHeader,
+        showBottomWatermark,
+        subtitlePosition,
+        phoneResolution,
+        phoneCssWidth: getPhoneExportCssWidth(resolution),
+        year: yearInput?.value || "",
+        side: sideInput?.value || "",
+        subtitle: subtitleInputElement?.value || ""
+    });
+}
+
+function setPosterSharedState(poster, previewFontScale = getPreviewFontScale()) {
+    if (!poster) return;
+
+    applyPosterContainerState(poster);
+
+    const year = getPosterPart(poster, "year");
+    const side = getPosterPart(poster, "side");
+    const subtitle = getPosterPart(poster, "subtitle");
+    const copyright = getPosterPart(poster, "copyright");
+    const yearInput = document.getElementById("yearInput");
+    const sideInput = document.getElementById("sideInput");
+    const subtitleInputElement = document.getElementById("subtitleInput");
+
+    if (year) {
+        year.innerText = yearInput?.value || "";
+        year.dataset.shadowText = yearInput?.value || "";
+        year.style.fontFamily = resolveYearFontFamily();
+        year.style.color = textColor;
+        year.style.fontSize = `${globalFont.year * previewFontScale}px`;
+        year.classList.remove("typesetText");
+    }
+
+    if (subtitle) {
+        subtitle.innerText = subtitleInputElement?.value || "";
+        subtitle.style.fontFamily = resolveSubtitleFontFamily();
+        subtitle.style.color = textColor;
+        applySubtitleSettings(subtitle, previewFontScale);
+        subtitle.classList.remove("typesetText");
+        renderVerticalTextTarget("subtitle", subtitleInputElement?.value || "", poster);
+    }
+
+    if (side) {
+        side.innerText = sideInput?.value || "";
+        side.style.fontFamily = resolveSideFontFamily();
+        side.style.color = textColor;
+        side.style.fontSize = `${globalFont.side * previewFontScale}px`;
+        renderVerticalTextTarget("side", sideInput?.value || "", poster);
+    }
+
+    if (copyright) {
+        copyright.style.fontSize = `${BASE_COPYRIGHT_FONT_SIZE * getResolutionDesignScale()}px`;
+        copyright.style.display = showBottomWatermark ? "" : "none";
+    }
+
+    renderPosterCards(poster, previewFontScale);
+}
+
+async function ensurePhoneRenderLayout() {
+    const sourcePoster = document.getElementById("poster");
+    if (!sourcePoster) return null;
+
+    const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
+    const width = getPhoneExportCssWidth(resolution);
+    const signature = getPhoneRenderSignature();
+    if (phoneRenderPoster && phoneRenderLayoutSignature === signature) {
+        return phoneRenderPoster;
+    }
+
+    if (phoneRenderLayoutPromise) {
+        const pendingLayout = phoneRenderLayoutPromise;
+        await pendingLayout;
+        if (phoneRenderLayoutPromise === pendingLayout) {
+            phoneRenderLayoutPromise = null;
+        }
+        return ensurePhoneRenderLayout();
+    }
+
+    const layoutPromise = (async () => {
+        if (document.fonts?.ready) {
+            await document.fonts.ready;
+        }
+
+        const host = document.getElementById("phoneRenderHost");
+        if (!host) {
+            throw new Error("未找到手机排版容器。");
+        }
+        host.style.width = `${width}px`;
+        const nextPoster = sourcePoster.cloneNode(true);
+        nextPoster.classList.add("phoneRenderPoster");
+        nextPoster.style.width = `${width}px`;
+        nextPoster.style.minHeight = "0";
+        nextPoster.style.backgroundColor = backgroundColor;
+        nextPoster.removeAttribute("id");
+        nextPoster.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
+
+        host.replaceChildren(nextPoster);
+        setPosterSharedState(nextPoster);
+        syncHeadlineTextWidths(nextPoster);
+        applyPosterTypesetting(nextPoster);
+        syncCardsOffset(nextPoster);
+
+        phoneRenderPoster = nextPoster;
+        phoneRenderLayoutSignature = signature;
+        return nextPoster;
+    })();
+    phoneRenderLayoutPromise = layoutPromise;
+
+    try {
+        return await layoutPromise;
+    } finally {
+        if (phoneRenderLayoutPromise === layoutPromise) {
+            phoneRenderLayoutPromise = null;
+        }
+    }
+}
+
+function syncCardsOffset(poster = document.getElementById("poster")) {
+    const cards = getPosterPart(poster, "cards");
+    const side = getPosterPart(poster, "side");
+    const subtitle = getPosterPart(poster, "subtitle");
+    const header = getPosterPart(poster, "header");
 
     if (!poster || !cards || !side) return;
 
@@ -2174,7 +2406,7 @@ function syncCardsOffset() {
     const headerRect = header ? header.getBoundingClientRect() : null;
     const sideRect = side.getBoundingClientRect();
     if (subtitlePosition === "verticalLeft" && subtitle) {
-        const subtitleSettings = getSubtitleSettings();
+        const subtitleSettings = getSubtitleSettings(getPreviewFontScale(), subtitle);
         const initialSubtitleTop = Math.max(sideRect.bottom - subtitleRect.height - posterRect.top, 0);
         const subtitleRight = Math.max(posterRect.right - sideRect.left + subtitleSettings.gapToSideTitlePx, 0);
         poster.style.setProperty("--subtitle-vertical-top", `${initialSubtitleTop}px`);
@@ -2534,94 +2766,111 @@ function updateTimelineButtons() {
     }
 }
 
-function syncPhonePreview() {
+async function syncPhonePreview() {
     phonePreviewFrame = null;
-
-    const panel = document.getElementById("phonePreviewPanel");
-    const canvas = document.getElementById("phoneCanvas");
-    const canvasWrap = document.getElementById("phoneCanvasWrap");
-    const screen = document.getElementById("phoneScreen");
-    const topPaddingLayer = document.getElementById("phoneTopPadding");
-    const watermark = document.getElementById("phoneWatermark");
-    const poster = document.getElementById("poster");
-    const mockup = document.querySelector(".phoneMockup");
-    const scaleValue = document.getElementById("phonePreviewScaleValue");
-
-    if (!showPhonePreview || !panel || !canvas || !canvasWrap || !screen || !topPaddingLayer || !watermark || !poster) return;
-
-    const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
-    const imageWidth = poster.offsetWidth || resolution.width;
-    const watermarkSettings = getWatermarkSettings(1);
-    const topPaddingHeight = getExportTopPaddingHeight(resolution, 1);
-    const watermarkBandHeight = showBottomWatermark
-        ? getWatermarkBandHeight(resolution, 1, watermarkSettings)
-        : topPaddingHeight;
-    const clone = poster.cloneNode(true);
-    const posterStyle = window.getComputedStyle(poster);
-
-    screen.style.aspectRatio = `${resolution.width} / ${resolution.height}`;
-    screen.style.backgroundColor = posterStyle.backgroundColor || backgroundColor;
-    panel.style.setProperty("--phone-preview-scale", phonePreviewScale);
-    if (mockup) {
-        mockup.style.setProperty("--phone-preview-scale", phonePreviewScale);
-    }
-    if (scaleValue) {
-        scaleValue.innerText = `${Math.round(phonePreviewScale * 100)}%`;
+    if (phonePreviewSyncInProgress) {
+        pendingPhonePreviewSync = true;
+        return;
     }
 
-    clone.classList.add("phonePosterClone");
-    clone.style.width = `${imageWidth}px`;
-    clone.style.minHeight = "0";
-    clone.style.backgroundColor = "transparent";
+    phonePreviewSyncInProgress = true;
 
-    const clonedBackgroundCanvas = clone.querySelector(".posterBackgroundCanvas");
-    if (clonedBackgroundCanvas) {
-        clonedBackgroundCanvas.hidden = true;
+    try {
+        const panel = document.getElementById("phonePreviewPanel");
+        const canvas = document.getElementById("phoneCanvas");
+        const canvasWrap = document.getElementById("phoneCanvasWrap");
+        const screen = document.getElementById("phoneScreen");
+        const topPaddingLayer = document.getElementById("phoneTopPadding");
+        const watermark = document.getElementById("phoneWatermark");
+        const mockup = document.querySelector(".phoneMockup");
+        const scaleValue = document.getElementById("phonePreviewScaleValue");
+
+        if (!showPhonePreview || !panel || !canvas || !canvasWrap || !screen || !topPaddingLayer || !watermark) return;
+
+        await flushPendingPosterWork();
+        const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
+        const phonePoster = await ensurePhoneRenderLayout();
+        if (!phonePoster) return;
+
+        const imageWidth = getPhoneExportCssWidth(resolution);
+        const clone = phonePoster.cloneNode(true);
+        const background = window.getComputedStyle(phonePoster).backgroundColor || backgroundColor;
+        const watermarkSettings = getWatermarkSettings(1);
+        const topPaddingHeight = getExportTopPaddingHeight(resolution, 1);
+        const watermarkBandHeight = showBottomWatermark
+            ? getWatermarkBandHeight(resolution, 1, watermarkSettings)
+            : topPaddingHeight;
+
+        screen.style.aspectRatio = `${resolution.width} / ${resolution.height}`;
+        screen.style.backgroundColor = background;
+        panel.style.setProperty("--phone-preview-scale", phonePreviewScale);
+        if (mockup) {
+            mockup.style.setProperty("--phone-preview-scale", phonePreviewScale);
+        }
+        if (scaleValue) {
+            scaleValue.innerText = `${Math.round(phonePreviewScale * 100)}%`;
+        }
+
+        clone.classList.add("phonePosterClone");
+        clone.style.width = `${imageWidth}px`;
+        clone.style.minHeight = "0";
+        clone.style.backgroundColor = "transparent";
+
+        const clonedBackgroundCanvas = clone.querySelector(".posterBackgroundCanvas");
+        if (clonedBackgroundCanvas) {
+            clonedBackgroundCanvas.hidden = true;
+        }
+
+        const clonedCopyright = getPosterPart(clone, "copyright");
+        if (clonedCopyright) {
+            clonedCopyright.style.visibility = "hidden";
+            clonedCopyright.style.marginTop = "0";
+            clonedCopyright.style.height = "0";
+            clonedCopyright.style.overflow = "hidden";
+        }
+
+        canvas.innerHTML = "";
+        canvas.style.width = `${imageWidth}px`;
+        canvas.style.minHeight = "0";
+        canvas.style.marginTop = "0";
+        canvas.appendChild(clone);
+
+        canvasWrap.innerHTML = "";
+        canvasWrap.style.backgroundColor = "transparent";
+        canvasWrap.appendChild(canvas);
+
+        watermark.innerText = watermarkSettings.text;
+        watermark.style.backgroundColor = backgroundImageDataUrl ? "transparent" : watermarkSettings.background;
+        watermark.style.color = watermarkSettings.color;
+        watermark.hidden = !showBottomWatermark;
+
+        requestAnimationFrame(() => {
+            syncPhoneBackgroundCanvas(screen, resolution);
+            const scale = screen.clientWidth / imageWidth;
+            const scaledTopPadding = topPaddingHeight * scale;
+            const scaledWatermarkHeight = watermarkBandHeight * scale;
+            const scaledFontSize = parseFloat(window.getComputedStyle(getPosterPart(phonePoster, "copyright") || document.body).fontSize || "13") * scale;
+            topPaddingLayer.style.height = `${scaledTopPadding}px`;
+            topPaddingLayer.style.backgroundColor = backgroundImageDataUrl ? "transparent" : watermarkSettings.background;
+            canvasWrap.style.top = `${scaledTopPadding}px`;
+            canvasWrap.style.bottom = `${scaledWatermarkHeight}px`;
+            canvasWrap.style.height = "";
+            const availableContentHeight = Math.max(screen.clientHeight - scaledTopPadding - scaledWatermarkHeight, 0);
+            const contentHeight = Math.max(clone.scrollHeight * scale, availableContentHeight);
+            canvas.style.transform = `scale(${scale})`;
+            canvas.style.height = `${contentHeight}px`;
+            watermark.style.height = `${scaledWatermarkHeight}px`;
+            watermark.style.font = watermarkSettings.font;
+            watermark.style.fontSize = `${scaledFontSize}px`;
+            syncPhoneScroll();
+        });
+    } finally {
+        phonePreviewSyncInProgress = false;
+        if (pendingPhonePreviewSync) {
+            pendingPhonePreviewSync = false;
+            schedulePhonePreviewSync();
+        }
     }
-
-    const clonedCopyright = clone.querySelector("#copyright");
-    if (clonedCopyright) {
-        clonedCopyright.style.visibility = "hidden";
-        clonedCopyright.style.marginTop = "0";
-        clonedCopyright.style.height = "0";
-        clonedCopyright.style.overflow = "hidden";
-    }
-
-    canvas.innerHTML = "";
-    canvas.style.width = `${imageWidth}px`;
-    canvas.style.minHeight = "0";
-    canvas.style.marginTop = "0";
-    canvas.appendChild(clone);
-
-    canvasWrap.innerHTML = "";
-    canvasWrap.style.backgroundColor = "transparent";
-    canvasWrap.appendChild(canvas);
-
-    watermark.innerText = watermarkSettings.text;
-    watermark.style.backgroundColor = backgroundImageDataUrl ? "transparent" : watermarkSettings.background;
-    watermark.style.color = watermarkSettings.color;
-    watermark.hidden = !showBottomWatermark;
-
-    requestAnimationFrame(() => {
-        syncPhoneBackgroundCanvas(screen, resolution);
-        const scale = screen.clientWidth / imageWidth;
-        const scaledTopPadding = topPaddingHeight * scale;
-        const scaledWatermarkHeight = watermarkBandHeight * scale;
-        const scaledFontSize = parseFloat(window.getComputedStyle(document.getElementById("copyright")).fontSize || "13") * scale;
-        topPaddingLayer.style.height = `${scaledTopPadding}px`;
-        topPaddingLayer.style.backgroundColor = backgroundImageDataUrl ? "transparent" : watermarkSettings.background;
-        canvasWrap.style.top = `${scaledTopPadding}px`;
-        canvasWrap.style.bottom = `${scaledWatermarkHeight}px`;
-        canvasWrap.style.height = "";
-        const availableContentHeight = Math.max(screen.clientHeight - scaledTopPadding - scaledWatermarkHeight, 0);
-        const contentHeight = Math.max(clone.scrollHeight * scale, availableContentHeight);
-        canvas.style.transform = `scale(${scale})`;
-        canvas.style.height = `${contentHeight}px`;
-        watermark.style.height = `${scaledWatermarkHeight}px`;
-        watermark.style.font = watermarkSettings.font;
-        watermark.style.fontSize = `${scaledFontSize}px`;
-        syncPhoneScroll();
-    });
 }
 
 function syncPhoneScroll() {
@@ -2642,7 +2891,12 @@ function syncPhoneScroll() {
 }
 
 function schedulePhonePreviewSync() {
-    if (!showPhonePreview || phonePreviewFrame !== null) return;
+    if (!showPhonePreview) return;
+    if (phonePreviewSyncInProgress) {
+        pendingPhonePreviewSync = true;
+        return;
+    }
+    if (phonePreviewFrame !== null) return;
 
     phonePreviewFrame = requestAnimationFrame(syncPhonePreview);
 }
@@ -3109,7 +3363,9 @@ function changePhoneResolution(value) {
     if (!phoneResolutions[value]) return;
 
     phoneResolution = value;
-    renderPreview();
+    updateTimelineButtons();
+    schedulePhonePreviewSync();
+    saveState();
 }
 
 function changePhonePreviewScale(delta) {
@@ -3435,29 +3691,35 @@ if (window.visualViewport) {
    Export JPG
 =========================== */
 
-function preparePosterForExport() {
+function preparePosterForExport(poster = document.getElementById("poster")) {
     const preview = document.getElementById("preview");
-    const poster = document.getElementById("poster");
 
     if (!preview || !poster) return null;
 
-    const oldScrollTop = preview.scrollTop;
-    preview.scrollTop = 0;
-
-    poster.style.width = poster.offsetWidth + "px";
+    const isDesktopPoster = poster === document.getElementById("poster");
+    const oldScrollTop = isDesktopPoster ? preview.scrollTop : 0;
+    const previousWidth = poster.style.width;
+    if (isDesktopPoster) {
+        preview.scrollTop = 0;
+        poster.style.width = poster.offsetWidth + "px";
+    }
 
     return {
         preview,
         poster,
-        oldScrollTop
+        oldScrollTop,
+        previousWidth,
+        isDesktopPoster
     };
 }
 
 function restorePosterAfterExport(exportState) {
     if (!exportState) return;
 
-    exportState.poster.style.width = "";
-    exportState.preview.scrollTop = exportState.oldScrollTop;
+    exportState.poster.style.width = exportState.previousWidth;
+    if (exportState.isDesktopPoster) {
+        exportState.preview.scrollTop = exportState.oldScrollTop;
+    }
 }
 
 const ROTATED_VERTICAL_MARKS = new Set(Array.from("【】（）()《》〈〉「」『』[]［］{}｛｝〔〕：/；:;"));
@@ -3580,11 +3842,11 @@ function getVerticalTextTargetValue(config, fallbackElement = null) {
     return input?.value ?? fallbackElement?.innerText ?? "";
 }
 
-function renderVerticalTextTarget(target, value = null) {
+function renderVerticalTextTarget(target, value = null, poster = document.getElementById("poster")) {
     const config = getVerticalTextTargetConfig(target);
     if (!config) return;
 
-    const element = document.getElementById(config.elementId);
+    const element = getPosterPart(poster, config.elementId === "side" ? "side" : "subtitle");
     if (!element) return;
 
     if (typeof config.applySettings === "function") {
@@ -3692,12 +3954,13 @@ function renderVerticalTextAbsolute(clone, value, metrics, clonedDoc) {
     });
 }
 
-function renderVerticalTextCloneElement(clonedDoc, target) {
+function renderVerticalTextCloneElement(sourcePoster, clonedPoster, clonedDoc, target) {
     const config = getVerticalTextTargetConfig(target);
     if (!config) return;
 
-    const source = document.getElementById(config.elementId);
-    const clone = clonedDoc.getElementById(config.elementId);
+    const part = config.elementId === "side" ? "side" : "subtitle";
+    const source = getPosterPart(sourcePoster, part);
+    const clone = getPosterPart(clonedPoster, part);
     if (!source || !clone || window.getComputedStyle(source).display === "none") return;
 
     const text = getVerticalTextTargetValue(config, source);
@@ -3711,24 +3974,21 @@ function renderVerticalTextCloneElement(clonedDoc, target) {
     );
 }
 
-function renderVerticalTextForExport(clonedDoc) {
-    const clonedPoster = clonedDoc.getElementById("poster");
+function renderVerticalTextForExport(sourcePoster, clonedPoster, clonedDoc) {
     if (!clonedPoster) return;
 
     Object.values(VERTICAL_TEXT_TARGETS).forEach((config) => {
         if (typeof config.isExportActive === "function" && !config.isExportActive(clonedPoster)) return;
-        renderVerticalTextCloneElement(clonedDoc, config);
+        renderVerticalTextCloneElement(sourcePoster, clonedPoster, clonedDoc, config);
     });
 }
 
-async function capturePosterCanvas({ hideCopyright = false, scale = 3, afterCapture = null, transparentPosterBackground = false } = {}) {
-    flushPendingMobileTextInputs();
-    await flushPendingPreviewRender();
-    await flushDeferredCardTypesetting();
-    await flushDeferredPosterTypesetting();
-    await flushMobileTypesettingIfNeeded();
+async function capturePosterCanvas({ poster = document.getElementById("poster"), hideCopyright = false, scale = 3, beforeCapture = null, afterCapture = null, transparentPosterBackground = false, flushPending = true } = {}) {
+    if (flushPending) {
+        await flushPendingPosterWork();
+    }
 
-    const exportState = preparePosterForExport();
+    const exportState = preparePosterForExport(poster);
     if (!exportState) return Promise.reject(new Error("未找到预览区域，无法导出。"));
 
     try {
@@ -3736,12 +3996,17 @@ async function capturePosterCanvas({ hideCopyright = false, scale = 3, afterCapt
             await document.fonts.ready;
         }
 
+        if (typeof beforeCapture === "function") {
+            beforeCapture();
+        }
+
+        exportState.poster.dataset.captureTarget = "poster";
         const canvas = await html2canvas(exportState.poster, {
             backgroundColor: transparentPosterBackground ? null : backgroundColor,
             scale,
             useCORS: true,
             onclone: (clonedDoc) => {
-                const clonedPoster = clonedDoc.getElementById("poster");
+                const clonedPoster = clonedDoc.querySelector('[data-capture-target="poster"]');
                 if (clonedPoster) {
                     if (transparentPosterBackground) {
                         clonedPoster.style.backgroundColor = "transparent";
@@ -3763,10 +4028,10 @@ async function capturePosterCanvas({ hideCopyright = false, scale = 3, afterCapt
                     clonedPoster.classList.toggle("subtitleVerticalLeft", subtitlePosition === "verticalLeft");
                 }
 
-                renderVerticalTextForExport(clonedDoc);
+                renderVerticalTextForExport(exportState.poster, clonedPoster, clonedDoc);
 
                 if (hideCopyright) {
-                    const copyright = clonedDoc.getElementById("copyright");
+                    const copyright = getPosterPart(clonedPoster, "copyright");
                     if (copyright) {
                         copyright.style.visibility = "hidden";
                         copyright.style.marginTop = "0";
@@ -3778,22 +4043,29 @@ async function capturePosterCanvas({ hideCopyright = false, scale = 3, afterCapt
         });
 
         if (typeof afterCapture === "function") {
-            afterCapture(canvas);
+            afterCapture(canvas, exportState.poster);
         }
 
         return canvas;
     } finally {
+        exportState.poster.removeAttribute("data-capture-target");
         restorePosterAfterExport(exportState);
     }
 }
 
-async function exportImage() {
+async function exportDesktopLayoutImage() {
+    const restoreOverlay = showExportOverlay("正在导出...");
+
     try {
+        const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
+        const poster = document.getElementById("poster");
+        const exportScale = getLongImageExportScale(poster, resolution);
         const sourceCanvas = await capturePosterCanvas({
+            scale: exportScale,
+            beforeCapture: () => showTypesettingOverlayNow("正在导出..."),
             hideCopyright: !showBottomWatermark,
             transparentPosterBackground: Boolean(backgroundImageDataUrl)
         });
-        const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
         const scale = sourceCanvas.width / (document.getElementById("poster")?.offsetWidth || sourceCanvas.width);
         const posterStyle = window.getComputedStyle(document.getElementById("poster"));
         const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
@@ -3802,6 +4074,42 @@ async function exportImage() {
         downloadBlob(blob, "年度总结.jpg");
     } catch (error) {
         window.alert(error?.message || "导出失败，请稍后再试。");
+    } finally {
+        restoreOverlay();
+    }
+}
+
+async function exportImage() {
+    const restoreOverlay = showExportOverlay("正在导出...");
+
+    try {
+        const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
+        await flushPendingPosterWork();
+        const phonePoster = await ensurePhoneRenderLayout();
+        if (!phonePoster) {
+            throw new Error("未找到手机排版区域，无法导出。");
+        }
+
+        const preferredScale = getPhoneExportScale(resolution);
+        const exportScale = getLongImageExportScale(phonePoster, resolution, preferredScale);
+        const sourceCanvas = await capturePosterCanvas({
+            poster: phonePoster,
+            scale: exportScale,
+            flushPending: false,
+            beforeCapture: () => showTypesettingOverlayNow("正在导出..."),
+            hideCopyright: !showBottomWatermark,
+            transparentPosterBackground: Boolean(backgroundImageDataUrl)
+        });
+        const scale = sourceCanvas.width / getPhoneExportCssWidth(resolution);
+        const posterStyle = window.getComputedStyle(phonePoster);
+        const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
+        const canvas = await addCanvasTopPadding(sourceCanvas, topPaddingHeight, posterStyle.backgroundColor || backgroundColor);
+        const blob = await canvasToBlob(canvas, "image/jpeg", 1);
+        downloadBlob(blob, "年度总结.jpg");
+    } catch (error) {
+        window.alert(error?.message || "导出失败，请稍后再试。");
+    } finally {
+        restoreOverlay();
     }
 }
 
@@ -3898,8 +4206,7 @@ function downloadBlob(blob, filename, { fallbackWindow = null } = {}) {
     }, 250);
 }
 
-function getCanvasScale(sourceCanvas) {
-    const poster = document.getElementById("poster");
+function getCanvasScale(sourceCanvas, poster = document.getElementById("poster")) {
     if (!poster) return 1;
 
     return sourceCanvas.width / (poster.offsetWidth || sourceCanvas.width);
@@ -3909,11 +4216,10 @@ function clampCanvasY(value, sourceCanvas) {
     return Math.min(Math.max(Math.round(value), 0), sourceCanvas.height);
 }
 
-function getElementCanvasBounds(element, sourceCanvas, padding = 0) {
-    const poster = document.getElementById("poster");
+function getElementCanvasBounds(element, sourceCanvas, padding = 0, poster = document.getElementById("poster")) {
     if (!poster || !element) return null;
 
-    const scale = getCanvasScale(sourceCanvas);
+    const scale = getCanvasScale(sourceCanvas, poster);
     const posterRect = poster.getBoundingClientRect();
     const rect = element.getBoundingClientRect();
     const top = clampCanvasY((rect.top - posterRect.top) * scale - padding, sourceCanvas);
@@ -3924,11 +4230,10 @@ function getElementCanvasBounds(element, sourceCanvas, padding = 0) {
     return { top, bottom };
 }
 
-function getElementCanvasColumns(element, sourceCanvas, padding = 0) {
-    const poster = document.getElementById("poster");
+function getElementCanvasColumns(element, sourceCanvas, padding = 0, poster = document.getElementById("poster")) {
     if (!poster || !element) return null;
 
-    const scale = getCanvasScale(sourceCanvas);
+    const scale = getCanvasScale(sourceCanvas, poster);
     const posterRect = poster.getBoundingClientRect();
     const rect = element.getBoundingClientRect();
     const left = Math.max(0, Math.floor((rect.left - posterRect.left) * scale - padding));
@@ -3939,11 +4244,10 @@ function getElementCanvasColumns(element, sourceCanvas, padding = 0) {
     return { left, right };
 }
 
-function getTextNodeCanvasRanges(element, sourceCanvas, padding) {
-    const poster = document.getElementById("poster");
+function getTextNodeCanvasRanges(element, sourceCanvas, padding, poster = document.getElementById("poster")) {
     if (!poster || !element) return [];
 
-    const scale = getCanvasScale(sourceCanvas);
+    const scale = getCanvasScale(sourceCanvas, poster);
     const posterRect = poster.getBoundingClientRect();
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     const ranges = [];
@@ -3989,21 +4293,16 @@ function mergeCanvasRanges(ranges) {
         }, []);
 }
 
-function getProtectedTextRanges(sourceCanvas) {
-    const scale = getCanvasScale(sourceCanvas);
+function getProtectedTextRanges(sourceCanvas, poster = document.getElementById("poster")) {
+    const scale = getCanvasScale(sourceCanvas, poster);
     const textPadding = Math.max(2, Math.round(3 * scale));
-    const textSelectors = [
-        "#year",
-        "#subtitle",
-        ".cardTitle",
-        ".info"
-    ];
+    const textSelectors = [".posterYear", ".posterSubtitle", ".cardTitle", ".info"];
 
     const ranges = textSelectors.flatMap((selector) =>
-        Array.from(document.querySelectorAll(selector))
+        Array.from(poster?.querySelectorAll(selector) || [])
             .filter((element) => window.getComputedStyle(element).display !== "none")
             .flatMap((element) => {
-                const textRanges = getTextNodeCanvasRanges(element, sourceCanvas, textPadding);
+                const textRanges = getTextNodeCanvasRanges(element, sourceCanvas, textPadding, poster);
                 return textRanges;
             })
     );
@@ -4045,19 +4344,14 @@ function mergeCanvasColumns(columns) {
         }, []);
 }
 
-function getTextScanColumns(sourceCanvas) {
-    const scale = getCanvasScale(sourceCanvas);
+function getTextScanColumns(sourceCanvas, poster = document.getElementById("poster")) {
+    const scale = getCanvasScale(sourceCanvas, poster);
     const padding = Math.max(3, Math.round(6 * scale));
-    const selectors = [
-        "#year",
-        "#subtitle",
-        ".cardTitle",
-        ".info"
-    ];
+    const selectors = [".posterYear", ".posterSubtitle", ".cardTitle", ".info"];
     const columns = selectors.flatMap((selector) =>
-        Array.from(document.querySelectorAll(selector))
+        Array.from(poster?.querySelectorAll(selector) || [])
             .filter((element) => window.getComputedStyle(element).display !== "none")
-            .map((element) => getElementCanvasColumns(element, sourceCanvas, padding))
+            .map((element) => getElementCanvasColumns(element, sourceCanvas, padding, poster))
             .filter(Boolean)
     );
 
@@ -4092,14 +4386,14 @@ function getCanvasBackgroundSample(sourceCanvas, ctx) {
         .at(-1);
 }
 
-function createCanvasInkDetector(sourceCanvas) {
+function createCanvasInkDetector(sourceCanvas, poster = document.getElementById("poster")) {
     const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
 
     const background = getCanvasBackgroundSample(sourceCanvas, ctx);
     if (!background) return null;
 
-    const scanColumns = getTextScanColumns(sourceCanvas);
+    const scanColumns = getTextScanColumns(sourceCanvas, poster);
     const rowCache = new Map();
     const scannedWidth = scanColumns.reduce((total, column) => total + column.right - column.left, 0);
     const minInkPixels = Math.max(3, Math.round(scannedWidth * 0.001));
@@ -4194,11 +4488,11 @@ function getLineBoundaryFallbackCutY(idealCutY, minCutY, protectedRanges, cleara
     return null;
 }
 
-function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, protectedRanges, hasInkAtRow) {
+function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, protectedRanges, hasInkAtRow, poster = document.getElementById("poster")) {
     const remainingHeight = sourceCanvas.height - sourceY;
     if (remainingHeight <= maxContentHeight) return remainingHeight;
 
-    const scale = getCanvasScale(sourceCanvas);
+    const scale = getCanvasScale(sourceCanvas, poster);
     const idealCutY = sourceY + maxContentHeight;
     const minCutY = sourceY + Math.max(1, Math.round(12 * scale));
     const clearance = Math.max(4, Math.round(6 * scale));
@@ -4218,12 +4512,12 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
     return maxContentHeight;
 }
 
-function getTimelineCardSliceBounds(sourceCanvas) {
-    const scale = getCanvasScale(sourceCanvas);
+function getTimelineCardSliceBounds(sourceCanvas, poster = document.getElementById("poster")) {
+    const scale = getCanvasScale(sourceCanvas, poster);
     const padding = Math.max(18, Math.round(18 * scale));
 
-    return Array.from(document.querySelectorAll(".card"))
-        .map((card) => getElementCanvasBounds(card, sourceCanvas, padding))
+    return Array.from(poster?.querySelectorAll(".card") || [])
+        .map((card) => getElementCanvasBounds(card, sourceCanvas, padding, poster))
         .filter(Boolean);
 }
 
@@ -4338,7 +4632,9 @@ function setButtonBusy(button, busyText) {
     const oldText = button.innerText;
     const oldDisabled = button.disabled;
     button.disabled = true;
-    button.innerText = busyText;
+    if (typeof busyText === "string") {
+        button.innerText = busyText;
+    }
 
     return () => {
         button.disabled = oldDisabled;
@@ -4359,7 +4655,8 @@ function getActiveExportButton(primaryId, fallbackId) {
 
 async function exportSlicedImagesZip() {
     const button = getActiveExportButton("previewExportSlicesBtn", "exportSlicesBtn");
-    const restoreButton = setButtonBusy(button, "正在切图...");
+    const restoreButton = setButtonBusy(button);
+    const restoreOverlay = showExportOverlay("正在导出...");
 
     try {
         if (typeof JSZip === "undefined") {
@@ -4367,16 +4664,24 @@ async function exportSlicedImagesZip() {
         }
 
         const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
-        const poster = document.getElementById("poster");
-        const posterWidth = poster?.offsetWidth || resolution.width;
-        const exportScale = resolution.width / posterWidth;
+        const posterWidth = getPhoneExportCssWidth(resolution);
+        const exportScale = getPhoneExportScale(resolution);
+        await flushPendingPosterWork();
+        const phonePoster = await ensurePhoneRenderLayout();
+        if (!phonePoster) {
+            throw new Error("未找到手机排版区域，无法切图导出。");
+        }
+
         let protectedRanges = [];
         const sourceCanvas = await capturePosterCanvas({
+            poster: phonePoster,
             hideCopyright: true,
             scale: exportScale,
+            flushPending: false,
+            beforeCapture: () => showTypesettingOverlayNow("正在导出..."),
             transparentPosterBackground: Boolean(backgroundImageDataUrl),
-            afterCapture: (canvas) => {
-                protectedRanges = getProtectedTextRanges(canvas);
+            afterCapture: (canvas, capturedPoster) => {
+                protectedRanges = getProtectedTextRanges(canvas, capturedPoster);
             }
         });
         const scale = sourceCanvas.width / posterWidth;
@@ -4387,7 +4692,7 @@ async function exportSlicedImagesZip() {
             : topPaddingHeight;
         const sliceHeight = resolution.height;
         const contentSliceHeight = Math.max(sliceHeight - topPaddingHeight - watermarkBandHeight, 1);
-        const hasInkAtRow = createCanvasInkDetector(sourceCanvas);
+        const hasInkAtRow = createCanvasInkDetector(sourceCanvas, phonePoster);
         const zip = new JSZip();
 
         let sourceY = 0;
@@ -4398,7 +4703,7 @@ async function exportSlicedImagesZip() {
             const isLastSlice = remainingHeight <= contentSliceHeight;
             const currentContentHeight = isLastSlice
                 ? remainingHeight
-                : getSafeContentSliceHeight(sourceCanvas, sourceY, contentSliceHeight, protectedRanges, hasInkAtRow);
+                : getSafeContentSliceHeight(sourceCanvas, sourceY, contentSliceHeight, protectedRanges, hasInkAtRow, phonePoster);
 
             await addSliceToZip(
                 zip,
@@ -4417,15 +4722,18 @@ async function exportSlicedImagesZip() {
             index += 1;
         }
 
-        if (button) {
-            button.innerText = "正在打包...";
-        }
         const zipBlob = await zip.generateAsync({ type: "blob" });
         const filename = "年度总结-已切图jpg.zip";
-        downloadBlob(zipBlob, filename);
+        const handledByExternalDelivery = typeof window.slicedZipDelivery?.deliver === "function"
+            ? await window.slicedZipDelivery.deliver({ blob: zipBlob, filename })
+            : false;
+        if (!handledByExternalDelivery) {
+            downloadBlob(zipBlob, filename);
+        }
     } catch (error) {
         window.alert(error?.message || "切图导出失败，请稍后再试。");
     } finally {
+        restoreOverlay();
         restoreButton();
     }
 }
