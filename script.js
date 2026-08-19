@@ -5037,7 +5037,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
                 topPaddingHeight,
                 watermarkBandHeight,
                 watermarkSettings,
-                isLastSlice ? null : sliceHeight,
+                sliceHeight,
                 showBottomWatermark,
                 jpegQuality
             );
