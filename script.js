@@ -139,17 +139,30 @@ function getLongImageExportScale(
     resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"],
     preferredScale = LONG_IMAGE_EXPORT_SCALE
 ) {
-    if (!isLikelyMobileBrowser()) return preferredScale;
-
     const posterWidth = poster?.offsetWidth || getPhoneExportCssWidth(resolution);
     const posterHeight = poster?.scrollHeight || poster?.offsetHeight || resolution.height;
-    const outputWidth = posterWidth * preferredScale;
-    const outputHeight = posterHeight * preferredScale + getExportTopPaddingHeight(resolution, preferredScale);
-    const outputPixels = outputWidth * outputHeight;
+    const outputPixels = posterWidth
+        * (posterHeight + topPadding)
+        * preferredScale
+        * preferredScale;
+    const pixelLimit = isLikelyMobileBrowser()
+        ? MOBILE_LONG_IMAGE_SCALE_PIXEL_LIMIT
+        : DESKTOP_LONG_IMAGE_SCALE_PIXEL_LIMIT;
+    if (outputPixels <= pixelLimit) return preferredScale;
 
-    return outputPixels > MOBILE_LONG_IMAGE_SCALE_PIXEL_LIMIT
-        ? Math.min(preferredScale, MOBILE_LONG_IMAGE_FALLBACK_SCALE)
-        : preferredScale;
+    const safeScale = Math.sqrt(pixelLimit / (posterWidth * (posterHeight + topPadding)));
+    const exportScale = Math.min(preferredScale, Math.max(LONG_IMAGE_MIN_EXPORT_SCALE, safeScale));
+    console.info("Long image export scale reduced", {
+        preferredScale,
+        exportScale,
+        minScale: LONG_IMAGE_MIN_EXPORT_SCALE,
+        posterWidth,
+        posterHeight,
+        estimatedPixelsAtPreferredScale: Math.round(outputPixels),
+        pixelLimit
+    });
+
+    return exportScale;
 }
 
 function getResolutionDesignScale() {
@@ -756,7 +769,8 @@ const TYPESETTING_OVERLAY_MIN_VISIBLE_MS = 0;
 const STATE_SAVE_DEBOUNCE_MS = 350;
 const MOBILE_TEXT_INPUT_COMMIT_DELAY_MS = 520;
 const LONG_IMAGE_EXPORT_SCALE = 3;
-const MOBILE_LONG_IMAGE_FALLBACK_SCALE = 2;
+const LONG_IMAGE_MIN_EXPORT_SCALE = 1;
+const DESKTOP_LONG_IMAGE_SCALE_PIXEL_LIMIT = 36 * 1000 * 1000;
 const MOBILE_LONG_IMAGE_SCALE_PIXEL_LIMIT = 24 * 1000 * 1000;
 
 let typesetMeasureLayer = null;
@@ -977,8 +991,8 @@ function createFastTypesetRangeMeasurer(tokens, root) {
     };
 }
 
-function createTypesetRangeMeasurer(tokens, root) {
-    if (tokens.length > 160) {
+function createTypesetRangeMeasurer(tokens, root, { forceDomMeasure = false } = {}) {
+    if (!forceDomMeasure && tokens.length > 160) {
         const fastMeasurer = createFastTypesetRangeMeasurer(tokens, root);
         if (fastMeasurer) return fastMeasurer;
     }
@@ -1522,10 +1536,10 @@ function getTypesetSegmentFitEnd(tokens, start, end, maxWidth, measureRange) {
     return fitEnd;
 }
 
-function buildTypesetLines(tokens, root, maxWidth, { strategy = TYPESET_ADJUST_STRATEGY, justify = false } = {}) {
+function buildTypesetLines(tokens, root, maxWidth, { strategy = TYPESET_ADJUST_STRATEGY, justify = false, forceDomMeasure = false } = {}) {
     const lines = [];
     let segmentStart = null;
-    const measureRange = createTypesetRangeMeasurer(tokens, root);
+    const measureRange = createTypesetRangeMeasurer(tokens, root, { forceDomMeasure });
 
     function pushLine(start, end, { forcedBreakAfter = false } = {}) {
         const lineTokens = tokens.slice(start, end);
@@ -1599,12 +1613,7 @@ function buildTypesetLines(tokens, root, maxWidth, { strategy = TYPESET_ADJUST_S
     return justify ? justifyTypesetLines(lines, maxWidth) : lines;
 }
 
-function typesetTextElement(element, { strategy = TYPESET_ADJUST_STRATEGY, justify = false } = {}) {
-    if (!element || !element.textContent.trim()) return;
-
-    const tokens = collectTypesetTokens(element);
-    const maxWidth = getTypesetAvailableWidth(element);
-    const lines = buildTypesetLines(tokens, element, maxWidth, { strategy, justify });
+function renderTypesetLines(element, lines) {
     const fragment = document.createDocumentFragment();
 
     lines.forEach((line) => {
@@ -1614,6 +1623,34 @@ function typesetTextElement(element, { strategy = TYPESET_ADJUST_STRATEGY, justi
     element.innerHTML = "";
     element.classList.add("typesetText");
     element.appendChild(fragment);
+}
+
+function hasOverflowingTypesetLine(element, maxWidth) {
+    const tolerance = 1;
+
+    return Array.from(element?.querySelectorAll(".typesetLineInner") || [])
+        .some((line) => line.getBoundingClientRect().width > maxWidth + tolerance);
+}
+
+function typesetTextElement(element, { strategy = TYPESET_ADJUST_STRATEGY, justify = false } = {}) {
+    if (!element || !element.textContent.trim()) return;
+
+    const tokens = collectTypesetTokens(element);
+    const maxWidth = getTypesetAvailableWidth(element);
+    const options = { strategy, justify };
+    const lines = buildTypesetLines(tokens, element, maxWidth, options);
+
+    renderTypesetLines(element, lines);
+
+    if (tokens.length > 160 && hasOverflowingTypesetLine(element, maxWidth)) {
+        renderTypesetLines(
+            element,
+            buildTypesetLines(tokens, element, maxWidth, {
+                ...options,
+                forceDomMeasure: true
+            })
+        );
+    }
 }
 
 function typesetSingleLineFirstElement(element, options = {}) {
@@ -3048,11 +3085,74 @@ function applyRichTextFont(index, value, selectEl = null) {
     renderPreview();
 }
 
+function createPlainTextPasteFragment(text, doc = document) {
+    const fragment = doc.createDocumentFragment();
+    const normalizedText = String(text ?? "").replace(/\r\n?/g, "\n");
+    const lines = normalizedText.split("\n");
+
+    lines.forEach((line, index) => {
+        if (line) {
+            fragment.appendChild(doc.createTextNode(line));
+        }
+
+        if (index < lines.length - 1) {
+            fragment.appendChild(doc.createElement("br"));
+        }
+    });
+
+    return fragment;
+}
+
+function dispatchRichTextInput(editorEl, text) {
+    const event = typeof InputEvent === "function"
+        ? new InputEvent("input", {
+            bubbles: true,
+            inputType: "insertText",
+            data: text
+        })
+        : new Event("input", { bubbles: true });
+
+    editorEl.dispatchEvent(event);
+}
+
+function insertPlainTextIntoEditor(editorEl, text) {
+    if (!editorEl) return false;
+
+    const selection = window.getSelection();
+    let range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+    if (!isRangeInsideElement(range, editorEl)) {
+        range = document.createRange();
+        range.selectNodeContents(editorEl);
+        range.collapse(false);
+    }
+
+    const marker = document.createTextNode("");
+    const fragment = createPlainTextPasteFragment(text);
+    fragment.appendChild(marker);
+
+    range.deleteContents();
+    range.insertNode(fragment);
+    range.setStartBefore(marker);
+    range.collapse(true);
+    marker.remove();
+
+    if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+
+    return true;
+}
+
 function pastePlainText(event) {
     event.preventDefault();
 
+    const editorEl = event.currentTarget;
     const text = event.clipboardData?.getData("text/plain") ?? "";
-    document.execCommand("insertText", false, text);
+    if (insertPlainTextIntoEditor(editorEl, text)) {
+        dispatchRichTextInput(editorEl, text);
+    }
 }
 
 function updateCardSizeValue(index, type, value) {
@@ -3983,7 +4083,7 @@ function renderVerticalTextForExport(sourcePoster, clonedPoster, clonedDoc) {
     });
 }
 
-async function capturePosterCanvas({ poster = document.getElementById("poster"), hideCopyright = false, scale = 3, beforeCapture = null, afterCapture = null, transparentPosterBackground = false, flushPending = true } = {}) {
+async function capturePosterCanvas({ poster = document.getElementById("poster"), hideCopyright = false, scale = 3, beforeCapture = null, afterCapture = null, transparentPosterBackground = false, flushPending = true, captureY = null, captureHeight = null, expectedInkRanges = null } = {}) {
     if (flushPending) {
         await flushPendingPosterWork();
     }
@@ -4001,13 +4101,26 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
         }
 
         exportState.poster.dataset.captureTarget = "poster";
-        const canvas = await html2canvas(exportState.poster, {
+        const captureOptions = {
             backgroundColor: transparentPosterBackground ? null : backgroundColor,
             scale,
             useCORS: true,
             onclone: (clonedDoc) => {
                 const clonedPoster = clonedDoc.querySelector('[data-capture-target="poster"]');
                 if (clonedPoster) {
+                    const clonedPhoneRenderHost = clonedPoster.closest(".phoneRenderHost");
+                    if (clonedPhoneRenderHost) {
+                        clonedPhoneRenderHost.style.position = "absolute";
+                        clonedPhoneRenderHost.style.left = "0";
+                        clonedPhoneRenderHost.style.top = "0";
+                        clonedPhoneRenderHost.style.zIndex = "0";
+                        clonedPhoneRenderHost.style.visibility = "visible";
+                        clonedPhoneRenderHost.style.opacity = "1";
+                        clonedPhoneRenderHost.style.transform = "none";
+                    }
+                    clonedPoster.style.visibility = "visible";
+                    clonedPoster.style.opacity = "1";
+                    clonedPoster.style.transform = "none";
                     if (transparentPosterBackground) {
                         clonedPoster.style.backgroundColor = "transparent";
                         clonedPoster.style.backgroundImage = "none";
@@ -4040,7 +4153,47 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
                     }
                 }
             }
+        };
+        if (Number.isFinite(captureY)) {
+            captureOptions.y = Math.max(0, captureY);
+        }
+        if (Number.isFinite(captureHeight)) {
+            captureOptions.height = Math.max(1, captureHeight);
+        }
+
+        const canvas = await html2canvas(exportState.poster, captureOptions);
+        const protectedRanges = expectedInkRanges ?? getProtectedTextRanges(canvas, exportState.poster);
+        console.info("Poster capture result", {
+            canvasWidth: canvas.width,
+            canvasHeight: canvas.height,
+            canvasPixels: canvas.width * canvas.height,
+            posterWidth: exportState.poster.offsetWidth,
+            posterHeight: exportState.poster.scrollHeight,
+            scale,
+            captureY: Number.isFinite(captureY) ? captureOptions.y : null,
+            captureHeight: Number.isFinite(captureHeight) ? captureOptions.height : null,
+            protectedRanges: protectedRanges.length,
+            isPhoneRenderPoster: exportState.poster.classList.contains("phoneRenderPoster"),
+            transparentPosterBackground
         });
+
+        if (!canvasContainsExpectedPosterInk(canvas, exportState.poster, protectedRanges)) {
+            console.warn("Poster capture ink validation failed", {
+                canvasWidth: canvas.width,
+                canvasHeight: canvas.height,
+                canvasPixels: canvas.width * canvas.height,
+                posterWidth: exportState.poster.offsetWidth,
+                posterHeight: exportState.poster.scrollHeight,
+                scale,
+                captureY: Number.isFinite(captureY) ? captureOptions.y : null,
+                captureHeight: Number.isFinite(captureHeight) ? captureOptions.height : null,
+                protectedRanges: protectedRanges.length,
+                firstProtectedRange: protectedRanges[0] || null,
+                isPhoneRenderPoster: exportState.poster.classList.contains("phoneRenderPoster"),
+                transparentPosterBackground
+            });
+            throw new Error("图片生成失败，请稍后再试。");
+        }
 
         if (typeof afterCapture === "function") {
             afterCapture(canvas, exportState.poster);
@@ -4073,6 +4226,7 @@ async function exportDesktopLayoutImage() {
         const blob = await canvasToBlob(canvas, "image/jpeg", 1);
         downloadBlob(blob, "年度总结.jpg");
     } catch (error) {
+        console.error("Long image export failed", error);
         window.alert(error?.message || "导出失败，请稍后再试。");
     } finally {
         restoreOverlay();
@@ -4104,9 +4258,20 @@ async function exportImage() {
         const posterStyle = window.getComputedStyle(phonePoster);
         const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
         const canvas = await addCanvasTopPadding(sourceCanvas, topPaddingHeight, posterStyle.backgroundColor || backgroundColor);
+        console.info("Long image export output", {
+            sourceCanvasWidth: sourceCanvas.width,
+            sourceCanvasHeight: sourceCanvas.height,
+            finalCanvasWidth: canvas.width,
+            finalCanvasHeight: canvas.height,
+            finalCanvasPixels: canvas.width * canvas.height,
+            phonePosterWidth: phonePoster.offsetWidth,
+            phonePosterHeight: phonePoster.scrollHeight,
+            exportScale
+        });
         const blob = await canvasToBlob(canvas, "image/jpeg", 1);
         downloadBlob(blob, "年度总结.jpg");
     } catch (error) {
+        console.error("Long image export failed", error);
         window.alert(error?.message || "导出失败，请稍后再试。");
     } finally {
         restoreOverlay();
@@ -4434,6 +4599,31 @@ function createCanvasInkDetector(sourceCanvas, poster = document.getElementById(
     };
 }
 
+function canvasContainsExpectedPosterInk(sourceCanvas, poster = document.getElementById("poster"), expectedRanges = null) {
+    if (!sourceCanvas?.width || !sourceCanvas?.height || !poster) return false;
+
+    const protectedRanges = expectedRanges ?? getProtectedTextRanges(sourceCanvas, poster);
+    if (!protectedRanges.length) {
+        return true;
+    }
+
+    const hasInkAtRow = createCanvasInkDetector(sourceCanvas, poster);
+    if (!hasInkAtRow) {
+        return true;
+    }
+
+    return protectedRanges.some((range) => {
+        const top = Math.max(0, Math.floor(range.top));
+        const bottom = Math.min(sourceCanvas.height - 1, Math.ceil(range.bottom));
+
+        for (let y = top; y <= bottom; y += 1) {
+            if (hasInkAtRow(y)) return true;
+        }
+
+        return false;
+    });
+}
+
 function isCanvasInkCutBand(y, hasInkAtRow, clearance) {
     if (!hasInkAtRow) return false;
 
@@ -4591,7 +4781,34 @@ async function drawFullSliceBackground(ctx, width, height, fallbackBackground = 
     }
 }
 
-async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, topPaddingHeight, watermarkBandHeight, watermarkSettings, outputHeight = null, shouldDrawWatermark = true) {
+const DESKTOP_SLICED_EXPORT_JPEG_QUALITY = 0.94;
+const MOBILE_SLICED_EXPORT_JPEG_QUALITY = 0.82;
+const DESKTOP_SLICED_CAPTURE_WINDOW_PIXEL_LIMIT = 60 * 1000 * 1000;
+const MOBILE_SLICED_CAPTURE_WINDOW_PIXEL_LIMIT = 24 * 1000 * 1000;
+const SLICED_CAPTURE_MAX_WINDOW_SLICES = 40;
+
+function getSlicedCaptureWindowSlices(posterWidth, exportScale, contentSliceHeight) {
+    const pixelLimit = isLikelyMobileBrowser()
+        ? MOBILE_SLICED_CAPTURE_WINDOW_PIXEL_LIMIT
+        : DESKTOP_SLICED_CAPTURE_WINDOW_PIXEL_LIMIT;
+    const captureWidth = Math.max(1, Math.round(posterWidth * exportScale));
+    const maxCaptureHeight = Math.max(1, Math.floor(pixelLimit / captureWidth));
+    const slicesByPixelLimit = Math.floor(maxCaptureHeight / Math.max(1, contentSliceHeight));
+    const windowSlices = Math.max(1, Math.min(SLICED_CAPTURE_MAX_WINDOW_SLICES, slicesByPixelLimit));
+
+    console.info("Sliced export capture window", {
+        windowSlices,
+        maxWindowSlices: SLICED_CAPTURE_MAX_WINDOW_SLICES,
+        captureWidth,
+        contentSliceHeight,
+        maxCaptureHeight,
+        pixelLimit
+    });
+
+    return windowSlices;
+}
+
+async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, topPaddingHeight, watermarkBandHeight, watermarkSettings, outputHeight = null, shouldDrawWatermark = true, jpegQuality = DESKTOP_SLICED_EXPORT_JPEG_QUALITY) {
     const sliceOutputHeight = outputHeight ?? topPaddingHeight + sourceHeight + watermarkBandHeight;
     const watermarkTop = sliceOutputHeight - watermarkBandHeight;
     const sliceCanvas = document.createElement("canvas");
@@ -4622,8 +4839,8 @@ async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, to
         );
     }
 
-    const blob = await canvasToBlob(sliceCanvas, "image/jpeg", 1);
-    zip.file(`年度总结-${String(index).padStart(2, "0")}.jpg`, blob);
+    const blob = await canvasToBlob(sliceCanvas, "image/jpeg", jpegQuality);
+    zip.file(`年度总结-${String(index).padStart(2, "0")}.jpg`, blob, { compression: "STORE" });
 }
 
 function setButtonBusy(button, busyText) {
@@ -4653,6 +4870,164 @@ function getActiveExportButton(primaryId, fallbackId) {
     return document.getElementById(fallbackId);
 }
 
+function getCroppedProtectedRanges(protectedRanges, cropY, cropHeight) {
+    const cropBottom = cropY + cropHeight;
+
+    return protectedRanges
+        .filter((range) => range.bottom > cropY && range.top < cropBottom)
+        .map((range) => ({
+            top: Math.max(0, range.top - cropY),
+            bottom: Math.min(cropHeight, range.bottom - cropY)
+        }));
+}
+
+async function captureSlicedExportWindow({
+    phonePoster,
+    exportScale,
+    sourceY,
+    captureHeight,
+    protectedRanges,
+    maxWindowSlices,
+    contentSliceHeight,
+    showOverlayBeforeCapture
+}) {
+    let lastError = null;
+
+    for (let windowSlices = maxWindowSlices; windowSlices >= 1; windowSlices -= 1) {
+        const requestedCaptureHeight = Math.min(captureHeight, contentSliceHeight * windowSlices);
+        const localProtectedRanges = getCroppedProtectedRanges(
+            protectedRanges,
+            sourceY,
+            requestedCaptureHeight
+        );
+
+        try {
+            const sourceCanvas = await capturePosterCanvas({
+                poster: phonePoster,
+                hideCopyright: true,
+                scale: exportScale,
+                flushPending: false,
+                beforeCapture: showOverlayBeforeCapture,
+                transparentPosterBackground: Boolean(backgroundImageDataUrl),
+                captureY: sourceY / exportScale,
+                captureHeight: requestedCaptureHeight / exportScale,
+                expectedInkRanges: localProtectedRanges
+            });
+            const capturedHeight = Math.min(requestedCaptureHeight, sourceCanvas.height);
+            if (capturedHeight <= 0) {
+                throw new Error("图片生成失败，请稍后再试。");
+            }
+
+            return {
+                sourceCanvas,
+                capturedHeight,
+                protectedRanges: getCroppedProtectedRanges(protectedRanges, sourceY, capturedHeight),
+                windowSlices
+            };
+        } catch (error) {
+            lastError = error;
+            console.warn("Sliced export window capture failed, retrying with a smaller window.", {
+                windowSlices,
+                error
+            });
+        }
+    }
+
+    throw lastError || new Error("图片生成失败，请稍后再试。");
+}
+
+async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, exportScale, jpegQuality = DESKTOP_SLICED_EXPORT_JPEG_QUALITY) {
+    const posterWidth = getPhoneExportCssWidth(resolution);
+    const posterHeight = Math.max(phonePoster.scrollHeight, phonePoster.offsetHeight, 1);
+    const sourceCanvasMetrics = {
+        width: Math.max(1, Math.round(posterWidth * exportScale)),
+        height: Math.max(1, Math.ceil(posterHeight * exportScale))
+    };
+    const protectedRanges = getProtectedTextRanges(sourceCanvasMetrics, phonePoster);
+    const watermarkSettings = getWatermarkSettings(exportScale);
+    const topPaddingHeight = getExportTopPaddingHeight(resolution, exportScale);
+    const watermarkBandHeight = showBottomWatermark
+        ? getWatermarkBandHeight(resolution, exportScale, watermarkSettings)
+        : topPaddingHeight;
+    const sliceHeight = resolution.height;
+    const contentSliceHeight = Math.max(sliceHeight - topPaddingHeight - watermarkBandHeight, 1);
+    const initialWindowSlices = getSlicedCaptureWindowSlices(posterWidth, exportScale, contentSliceHeight);
+
+    let sourceY = 0;
+    let index = 1;
+    let maxWindowSlices = Math.max(1, Math.floor(initialWindowSlices));
+    let didShowOverlayBeforeCapture = false;
+
+    while (sourceY < sourceCanvasMetrics.height) {
+        const remainingHeight = sourceCanvasMetrics.height - sourceY;
+        const captureResult = await captureSlicedExportWindow({
+            phonePoster,
+            exportScale,
+            sourceY,
+            captureHeight: remainingHeight,
+            protectedRanges,
+            maxWindowSlices,
+            contentSliceHeight,
+            showOverlayBeforeCapture: didShowOverlayBeforeCapture
+                ? null
+                : () => {
+                    didShowOverlayBeforeCapture = true;
+                    showTypesettingOverlayNow("正在导出...");
+                }
+        });
+        const { sourceCanvas, capturedHeight, protectedRanges: localProtectedRanges, windowSlices } = captureResult;
+        const localHasInkAtRow = createCanvasInkDetector(sourceCanvas, phonePoster);
+        maxWindowSlices = windowSlices;
+
+        let localY = 0;
+        while (localY < capturedHeight && sourceY < sourceCanvasMetrics.height) {
+            const globalRemainingHeight = sourceCanvasMetrics.height - sourceY;
+            const localRemainingHeight = capturedHeight - localY;
+            if (localY > 0 && globalRemainingHeight > localRemainingHeight && localRemainingHeight < contentSliceHeight) {
+                break;
+            }
+
+            const maxContentHeight = Math.min(contentSliceHeight, localRemainingHeight, globalRemainingHeight);
+            const isLastSlice = globalRemainingHeight <= maxContentHeight;
+            const currentContentHeight = isLastSlice
+                ? maxContentHeight
+                : getSafeContentSliceHeight(
+                    sourceCanvas,
+                    localY,
+                    maxContentHeight,
+                    localProtectedRanges,
+                    localHasInkAtRow,
+                    phonePoster
+                );
+
+            if (currentContentHeight <= 0) {
+                throw new Error("图片生成失败，请稍后再试。");
+            }
+
+            await addSliceToZip(
+                zip,
+                sourceCanvas,
+                localY,
+                currentContentHeight,
+                index,
+                topPaddingHeight,
+                watermarkBandHeight,
+                watermarkSettings,
+                sliceHeight,
+                showBottomWatermark,
+                jpegQuality
+            );
+
+            sourceY += currentContentHeight;
+            localY += currentContentHeight;
+            index += 1;
+        }
+
+        sourceCanvas.width = 0;
+        sourceCanvas.height = 0;
+    }
+}
+
 async function exportSlicedImagesZip() {
     const button = getActiveExportButton("previewExportSlicesBtn", "exportSlicesBtn");
     const restoreButton = setButtonBusy(button);
@@ -4664,7 +5039,6 @@ async function exportSlicedImagesZip() {
         }
 
         const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
-        const posterWidth = getPhoneExportCssWidth(resolution);
         const exportScale = getPhoneExportScale(resolution);
         await flushPendingPosterWork();
         const phonePoster = await ensurePhoneRenderLayout();
@@ -4672,57 +5046,13 @@ async function exportSlicedImagesZip() {
             throw new Error("未找到手机排版区域，无法切图导出。");
         }
 
-        let protectedRanges = [];
-        const sourceCanvas = await capturePosterCanvas({
-            poster: phonePoster,
-            hideCopyright: true,
-            scale: exportScale,
-            flushPending: false,
-            beforeCapture: () => showTypesettingOverlayNow("正在导出..."),
-            transparentPosterBackground: Boolean(backgroundImageDataUrl),
-            afterCapture: (canvas, capturedPoster) => {
-                protectedRanges = getProtectedTextRanges(canvas, capturedPoster);
-            }
-        });
-        const scale = sourceCanvas.width / posterWidth;
-        const watermarkSettings = getWatermarkSettings(scale);
-        const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
-        const watermarkBandHeight = showBottomWatermark
-            ? getWatermarkBandHeight(resolution, scale, watermarkSettings)
-            : topPaddingHeight;
-        const sliceHeight = resolution.height;
-        const contentSliceHeight = Math.max(sliceHeight - topPaddingHeight - watermarkBandHeight, 1);
-        const hasInkAtRow = createCanvasInkDetector(sourceCanvas, phonePoster);
         const zip = new JSZip();
+        const slicedJpegQuality = isLikelyMobileBrowser()
+            ? MOBILE_SLICED_EXPORT_JPEG_QUALITY
+            : DESKTOP_SLICED_EXPORT_JPEG_QUALITY;
+        await addWindowedSlicedPosterToZip(zip, phonePoster, resolution, exportScale, slicedJpegQuality);
 
-        let sourceY = 0;
-        let index = 1;
-
-        while (sourceY < sourceCanvas.height) {
-            const remainingHeight = sourceCanvas.height - sourceY;
-            const isLastSlice = remainingHeight <= contentSliceHeight;
-            const currentContentHeight = isLastSlice
-                ? remainingHeight
-                : getSafeContentSliceHeight(sourceCanvas, sourceY, contentSliceHeight, protectedRanges, hasInkAtRow, phonePoster);
-
-            await addSliceToZip(
-                zip,
-                sourceCanvas,
-                sourceY,
-                currentContentHeight,
-                index,
-                topPaddingHeight,
-                watermarkBandHeight,
-                watermarkSettings,
-                sliceHeight,
-                showBottomWatermark
-            );
-
-            sourceY += currentContentHeight;
-            index += 1;
-        }
-
-        const zipBlob = await zip.generateAsync({ type: "blob" });
+        const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
         const filename = "年度总结-已切图jpg.zip";
         const handledByExternalDelivery = typeof window.slicedZipDelivery?.deliver === "function"
             ? await window.slicedZipDelivery.deliver({ blob: zipBlob, filename })
@@ -4731,6 +5061,7 @@ async function exportSlicedImagesZip() {
             downloadBlob(zipBlob, filename);
         }
     } catch (error) {
+        console.error("Sliced image export failed", error);
         window.alert(error?.message || "切图导出失败，请稍后再试。");
     } finally {
         restoreOverlay();
