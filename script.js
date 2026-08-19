@@ -225,6 +225,7 @@ const presetColors = [
 const customColorPicker = document.getElementById("customColorPicker");
 const backgroundImageInput = document.getElementById("backgroundImageInput");
 const textColorPicker = document.getElementById("textColorPicker");
+const currentWordCountElements = document.querySelectorAll("[data-current-word-count]");
 const subtitleInput = document.getElementById("subtitleInput");
 const sideSpacingInput = document.getElementById("sideSpacingInput");
 const paragraphTitleSpacingInput = document.getElementById("paragraphTitleSpacingInput");
@@ -326,6 +327,7 @@ let phoneRenderLayoutSignature = "";
 let phoneRenderLayoutPromise = null;
 let isInitializing = true;
 let editorRenderFrame = null;
+let wordCountRenderFrame = null;
 let backgroundImageCanvasCache = {
     src: "",
     promise: null,
@@ -568,6 +570,63 @@ function sanitizeRichText(value) {
 
     cleanNode(template.content);
     return template.innerHTML;
+}
+
+function extractPlainTextFromRichText(value) {
+    const template = document.createElement("template");
+    template.innerHTML = String(value ?? "");
+    const blockTags = new Set(["DIV", "P"]);
+
+    function readNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || "";
+        if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return "";
+        if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "BR") return "\n";
+
+        const text = Array.from(node.childNodes).map(readNode).join("");
+        if (node.nodeType === Node.ELEMENT_NODE && blockTags.has(node.tagName)) {
+            return `${text}\n`;
+        }
+
+        return text;
+    }
+
+    return readNode(template.content).replace(/\n$/, "");
+}
+
+function countTextUnits(value) {
+    const text = String(value ?? "");
+    const tokens = text.match(/[A-Za-z0-9]+|[\s\S]/g);
+    return tokens ? tokens.length : 0;
+}
+
+function getCurrentParagraphWordCount() {
+    return data.reduce((total, item, index) => {
+        if (item?.hidden) return total;
+
+        const pendingText = pendingMobileTextInputs.has(index)
+            ? pendingMobileTextInputs.get(index)
+            : item?.text;
+
+        return total + countTextUnits(extractPlainTextFromRichText(pendingText));
+    }, 0);
+}
+
+function updateCurrentWordCount() {
+    if (!currentWordCountElements.length) return;
+
+    const text = `当前字符数：${getCurrentParagraphWordCount()}`;
+    currentWordCountElements.forEach((element) => {
+        element.textContent = text;
+    });
+}
+
+function scheduleCurrentWordCountUpdate() {
+    if (!currentWordCountElements.length || wordCountRenderFrame !== null) return;
+
+    wordCountRenderFrame = requestAnimationFrame(() => {
+        wordCountRenderFrame = null;
+        updateCurrentWordCount();
+    });
 }
 
 function hasBoldAncestor(node, boundary) {
@@ -1150,6 +1209,8 @@ function flushPendingMobileTextInputs({ schedulePreview = true } = {}) {
         }
     });
 
+    scheduleCurrentWordCountUpdate();
+
     if (schedulePreview && pendingCardPreviewIndexes.size) {
         schedulePreviewRender(0, flushPendingCardPreviewRenders);
     }
@@ -1159,6 +1220,7 @@ function flushPendingMobileTextInputs({ schedulePreview = true } = {}) {
 
 function scheduleMobileTextInputCommit(index, value) {
     pendingMobileTextInputs.set(index, value);
+    scheduleCurrentWordCountUpdate();
     clearPendingMobileTextInputTimer();
 
     pendingMobileTextInputTimer = window.setTimeout(() => {
@@ -1328,6 +1390,12 @@ function showExportOverlay(message = "正在导出...") {
     };
 }
 
+function waitForNextPaint() {
+    return new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+}
+
 async function runPosterTypesettingCompletion({ shouldSave = true, hideOverlay = true } = {}) {
     pendingPosterTypesetTask = null;
     applyPosterTypesetting();
@@ -1393,6 +1461,10 @@ function getTypesetAvailableWidth(element) {
     const parentWidth = element.parentElement
         ? element.parentElement.getBoundingClientRect().width - padding
         : ownWidth;
+
+    if (element.matches(".posterYear")) {
+        return Math.max(1, parentWidth || ownWidth);
+    }
 
     return Math.max(1, Math.min(ownWidth || parentWidth, parentWidth || ownWidth));
 }
@@ -2611,6 +2683,7 @@ function renderEditor() {
 
     document.getElementById("cardEditor").innerHTML = html;
     document.querySelectorAll("#cardEditor textarea").forEach(autoResizeTextarea);
+    updateCurrentWordCount();
 }
 
 function renderHeadlineFontControls() {
@@ -2962,6 +3035,7 @@ function changeText(index, value) {
     }
 
     data[index].text = sanitizeRichText(value);
+    scheduleCurrentWordCountUpdate();
     schedulePreviewRender(PREVIEW_RENDER_DELAY_MS, () => renderPreview({ deferTypesetting: true }));
 }
 
@@ -4210,6 +4284,7 @@ async function exportDesktopLayoutImage() {
     const restoreOverlay = showExportOverlay("正在导出...");
 
     try {
+        await waitForNextPaint();
         const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
         const poster = document.getElementById("poster");
         const exportScale = getLongImageExportScale(poster, resolution);
@@ -4237,6 +4312,7 @@ async function exportImage() {
     const restoreOverlay = showExportOverlay("正在导出...");
 
     try {
+        await waitForNextPaint();
         const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
         await flushPendingPosterWork();
         const phonePoster = await ensurePhoneRenderLayout();
@@ -4574,7 +4650,7 @@ function getCanvasBackgroundSample(sourceCanvas, ctx) {
         .at(-1);
 }
 
-function createCanvasInkDetector(sourceCanvas, poster = document.getElementById("poster")) {
+function createCanvasInkDetector(sourceCanvas, poster = document.getElementById("poster"), { precomputeRows = false } = {}) {
     const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
 
@@ -4582,10 +4658,52 @@ function createCanvasInkDetector(sourceCanvas, poster = document.getElementById(
     if (!background) return null;
 
     const scanColumns = getTextScanColumns(sourceCanvas, poster);
-    const rowCache = new Map();
     const scannedWidth = scanColumns.reduce((total, column) => total + column.right - column.left, 0);
     const minInkPixels = Math.max(3, Math.round(scannedWidth * 0.001));
     const colorThreshold = 18;
+
+    if (precomputeRows) {
+        const rowInkCounts = new Uint16Array(sourceCanvas.height);
+        const rowChunkHeight = 512;
+
+        try {
+            for (const column of scanColumns) {
+                const width = column.right - column.left;
+
+                for (let chunkTop = 0; chunkTop < sourceCanvas.height; chunkTop += rowChunkHeight) {
+                    const chunkHeight = Math.min(rowChunkHeight, sourceCanvas.height - chunkTop);
+                    const imageData = ctx.getImageData(column.left, chunkTop, width, chunkHeight).data;
+
+                    for (let row = 0; row < chunkHeight; row += 1) {
+                        const globalRow = chunkTop + row;
+                        if (rowInkCounts[globalRow] >= minInkPixels) continue;
+
+                        const rowOffset = row * width * 4;
+                        for (let index = rowOffset; index < rowOffset + width * 4; index += 4) {
+                            const alpha = imageData[index + 3];
+                            if (alpha < 12) continue;
+
+                            const pixel = [imageData[index], imageData[index + 1], imageData[index + 2], alpha];
+                            if (getCanvasPixelDistance(pixel, background) > colorThreshold) {
+                                rowInkCounts[globalRow] += 1;
+                                if (rowInkCounts[globalRow] >= minInkPixels) break;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn("Sliced export ink pre-scan failed; falling back to DOM cut protection.", error);
+            return null;
+        }
+
+        return function hasInkAtRow(y) {
+            const rowY = Math.min(Math.max(Math.round(y), 0), sourceCanvas.height - 1);
+            return rowInkCounts[rowY] >= minInkPixels;
+        };
+    }
+
+    const rowCache = new Map();
 
     return function hasInkAtRow(y) {
         const rowY = Math.min(Math.max(Math.round(y), 0), sourceCanvas.height - 1);
@@ -4925,7 +5043,7 @@ async function captureSlicedExportWindow({
         );
 
         try {
-            const sourceCanvas = await capturePosterCanvas({
+            const captureOptions = {
                 poster: phonePoster,
                 hideCopyright: true,
                 scale: exportScale,
@@ -4935,7 +5053,8 @@ async function captureSlicedExportWindow({
                 captureY: sourceY / exportScale,
                 captureHeight: requestedCaptureHeight / exportScale,
                 expectedInkRanges: localProtectedRanges
-            });
+            };
+            const sourceCanvas = await capturePosterCanvas(captureOptions);
             const capturedHeight = Math.min(requestedCaptureHeight, sourceCanvas.height);
             if (capturedHeight <= 0) {
                 throw new Error("图片生成失败，请稍后再试。");
@@ -4945,11 +5064,13 @@ async function captureSlicedExportWindow({
                 sourceCanvas,
                 capturedHeight,
                 protectedRanges: getCroppedProtectedRanges(protectedRanges, sourceY, capturedHeight),
-                windowSlices
+                windowSlices,
+                captureEngine: "html2canvas"
             };
         } catch (error) {
             lastError = error;
             console.warn("Sliced export window capture failed, retrying with a smaller window.", {
+                captureEngine: "html2canvas",
                 windowSlices,
                 error
             });
@@ -4960,6 +5081,7 @@ async function captureSlicedExportWindow({
 }
 
 async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, exportScale, jpegQuality = DESKTOP_SLICED_EXPORT_JPEG_QUALITY) {
+    const exportStartedAt = performance.now();
     const posterWidth = getPhoneExportCssWidth(resolution);
     const posterHeight = Math.max(phonePoster.scrollHeight, phonePoster.offsetHeight, 1);
     const sourceCanvasMetrics = {
@@ -4981,9 +5103,15 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
     let index = 1;
     let maxWindowSlices = Math.max(1, Math.floor(initialWindowSlices));
     let didShowOverlayBeforeCapture = false;
+    let capturedWindowCount = 0;
+    let captureMs = 0;
+    let inkPreScanMs = 0;
+    let sliceComposeMs = 0;
+    const captureEngines = new Set();
 
     while (sourceY < sourceCanvasMetrics.height) {
         const remainingHeight = sourceCanvasMetrics.height - sourceY;
+        const captureStartedAt = performance.now();
         const captureResult = await captureSlicedExportWindow({
             phonePoster,
             exportScale,
@@ -4999,8 +5127,15 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
                     showTypesettingOverlayNow("正在导出...");
                 }
         });
-        const { sourceCanvas, capturedHeight, protectedRanges: localProtectedRanges, windowSlices } = captureResult;
-        const localHasInkAtRow = createCanvasInkDetector(sourceCanvas, phonePoster);
+        captureMs += performance.now() - captureStartedAt;
+        capturedWindowCount += 1;
+        const { sourceCanvas, capturedHeight, protectedRanges: localProtectedRanges, windowSlices, captureEngine } = captureResult;
+        if (captureEngine) {
+            captureEngines.add(captureEngine);
+        }
+        const inkPreScanStartedAt = performance.now();
+        const localHasInkAtRow = createCanvasInkDetector(sourceCanvas, phonePoster, { precomputeRows: true });
+        inkPreScanMs += performance.now() - inkPreScanStartedAt;
         maxWindowSlices = windowSlices;
 
         let localY = 0;
@@ -5028,6 +5163,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
                 throw new Error("图片生成失败，请稍后再试。");
             }
 
+            const sliceComposeStartedAt = performance.now();
             await addSliceToZip(
                 zip,
                 sourceCanvas,
@@ -5041,6 +5177,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
                 showBottomWatermark,
                 jpegQuality
             );
+            sliceComposeMs += performance.now() - sliceComposeStartedAt;
 
             sourceY += currentContentHeight;
             localY += currentContentHeight;
@@ -5050,6 +5187,19 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
         sourceCanvas.width = 0;
         sourceCanvas.height = 0;
     }
+
+    console.info("Sliced export timing", {
+        totalMs: Math.round(performance.now() - exportStartedAt),
+        captureMs: Math.round(captureMs),
+        inkPreScanMs: Math.round(inkPreScanMs),
+        sliceComposeMs: Math.round(sliceComposeMs),
+        capturedWindowCount,
+        outputSliceCount: index - 1,
+        captureEngines: Array.from(captureEngines),
+        exportScale,
+        jpegQuality,
+        sourceCanvasPixels: sourceCanvasMetrics.width * sourceCanvasMetrics.height
+    });
 }
 
 async function exportSlicedImagesZip() {
@@ -5058,6 +5208,7 @@ async function exportSlicedImagesZip() {
     const restoreOverlay = showExportOverlay("正在导出...");
 
     try {
+        await waitForNextPaint();
         if (typeof JSZip === "undefined") {
             throw new Error("JSZip 加载失败，请检查网络后重试。");
         }
@@ -5078,12 +5229,7 @@ async function exportSlicedImagesZip() {
 
         const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
         const filename = "年度总结-已切图jpg.zip";
-        const handledByExternalDelivery = typeof window.slicedZipDelivery?.deliver === "function"
-            ? await window.slicedZipDelivery.deliver({ blob: zipBlob, filename })
-            : false;
-        if (!handledByExternalDelivery) {
-            downloadBlob(zipBlob, filename);
-        }
+        downloadBlob(zipBlob, filename);
     } catch (error) {
         console.error("Sliced image export failed", error);
         window.alert(error?.message || "切图导出失败，请稍后再试。");

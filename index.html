@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1.0">
     <title>长文排版</title>
-    <link rel="stylesheet" href="style.css?v=13">
+    <link rel="stylesheet" href="style.css?v=17">
 </head>
 <body>
     <div id="preview">
@@ -25,17 +25,21 @@
     <div id="phoneRenderHost" class="phoneRenderHost" aria-hidden="true"></div>
 
     <div class="previewExportActions" aria-label="导出图片">
+        <div class="currentWordCount" data-current-word-count aria-live="polite">当前字符数：0</div>
         <button id="previewExportBtn" class="previewExportBtn" type="button" onclick="exportImage()">导出长图</button>
         <button id="previewExportSlicesBtn" class="previewExportBtn secondary" type="button" onclick="exportSlicedImagesZip()">导出已切图</button>
     </div>
 
     <button id="mobileTypesetRefreshBtn" class="mobileTypesetRefreshBtn" type="button" onclick="refreshMobileTypesetting()">刷新排版</button>
+    <div class="currentWordCount mobileCurrentWordCount" data-current-word-count aria-live="polite">当前字符数：0</div>
 
     <div id="dragBar">
         <button id="editorCollapseBtn" type="button" title="收起编辑器" aria-label="收起编辑器" onclick="toggleEditorCollapsed(event)">›</button>
     </div>
 
     <div id="editor">
+        <div class="mobileExportWarning">如果字符数大于7000，请不要在手机端导出图片</div>
+
         <div class="editorHeader">
             <h2>编辑器</h2>
             <div class="editorHeaderActions" data-mobile-panel="text">
@@ -71,6 +75,7 @@
         </div>
 
         <button id="exportBtn" class="mobileExportBtn" data-mobile-panel="export" onclick="exportImage()">导出长图</button>
+        <button id="exportSlicesBtn" class="mobileExportBtn" data-mobile-panel="export" onclick="exportSlicedImagesZip()">导出已切图</button>
 
         <div class="editItem" data-mobile-panel="style">
             <label>背景颜色</label>
@@ -193,7 +198,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script src="script.js?v=20260819-2"></script>
+    <script src="script.js?v=20260820-8"></script>
 
 </body>
 </html>
