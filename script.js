@@ -4477,6 +4477,29 @@ function getProtectedTextRanges(sourceCanvas, poster = document.getElementById("
         .sort((a, b) => a.top - b.top);
 }
 
+function getSlicedExportContentBottom(sourceCanvas, poster = document.getElementById("poster")) {
+    if (!sourceCanvas?.height || !poster) return sourceCanvas?.height || 1;
+
+    const selectors = [".posterYear", ".posterSubtitle", ".posterSide", ".card"];
+    const posterRect = poster.getBoundingClientRect();
+    const scale = getCanvasScale(sourceCanvas, poster);
+    const visibleBottoms = selectors.flatMap((selector) =>
+        Array.from(poster.querySelectorAll(selector))
+            .filter((element) => {
+                const style = window.getComputedStyle(element);
+                return style.display !== "none" && style.visibility !== "hidden";
+            })
+            .map((element) => element.getBoundingClientRect())
+            .filter((rect) => rect.width > 0 && rect.height > 0)
+            .map((rect) => clampCanvasY((rect.bottom - posterRect.top) * scale, sourceCanvas))
+    );
+    const contentBottom = Math.max(...visibleBottoms, 0);
+
+    if (contentBottom <= 0) return sourceCanvas.height;
+
+    return Math.max(1, Math.min(sourceCanvas.height, Math.ceil(contentBottom)));
+}
+
 function isProtectedCutY(y, ranges) {
     return ranges.some((range) => y > range.top && y < range.bottom);
 }
@@ -4943,6 +4966,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
         width: Math.max(1, Math.round(posterWidth * exportScale)),
         height: Math.max(1, Math.ceil(posterHeight * exportScale))
     };
+    sourceCanvasMetrics.height = getSlicedExportContentBottom(sourceCanvasMetrics, phonePoster);
     const protectedRanges = getProtectedTextRanges(sourceCanvasMetrics, phonePoster);
     const watermarkSettings = getWatermarkSettings(exportScale);
     const topPaddingHeight = getExportTopPaddingHeight(resolution, exportScale);
@@ -5013,7 +5037,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
                 topPaddingHeight,
                 watermarkBandHeight,
                 watermarkSettings,
-                sliceHeight,
+                isLastSlice ? null : sliceHeight,
                 showBottomWatermark,
                 jpegQuality
             );
