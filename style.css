@@ -172,14 +172,19 @@ body{
 .typesetLine{
     display:block;
     width:100%;
+    line-height:inherit;
+    padding-block:.06em;
     white-space:nowrap;
+    overflow:visible;
 }
 
 .typesetLineInner{
     display:inline-block;
     max-width:none;
+    line-height:inherit;
     white-space:nowrap;
     transform-origin:left center;
+    overflow:visible;
 }
 
 .typesetToken{
