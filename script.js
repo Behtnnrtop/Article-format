@@ -3,7 +3,9 @@
 =========================== */
 
 const STORAGE_KEY = "article-summary-state";
-const STATE_SCHEMA_VERSION = 12;
+const STATE_SCHEMA_VERSION = 17;
+const CONTENT_EDITOR_PLACEHOLDER = "输入段落内容...";
+const CARD_TITLE_PLACEHOLDER = "输入段落标题...";
 
 let globalFont = {
     year: 78,  // 标题
@@ -16,12 +18,16 @@ let backgroundImageDataUrl = "";
 let backgroundImageName = "";
 let backgroundImageBlendEdge = 0;
 let textColor = "#111111";
+let recentBackgroundColors = [];
+let recentTextColors = [];
 let fontFamily = '"Microsoft YaHei",sans-serif';
 const CARD_TITLE_DEFAULT_FONT_FAMILY = '"Songti SC","STSong","SimSun",serif';
 const INHERIT_FONT_VALUE = "__inherit__";
 let yearFontFamily = INHERIT_FONT_VALUE;
 let subtitleFontFamily = INHERIT_FONT_VALUE;
 let sideFontFamily = INHERIT_FONT_VALUE;
+let yearTextAlign = "left";
+let subtitleTextAlign = "left";
 let lineSpacing = 1.8;
 let paragraphSpacing = 0;
 let sideSpacing = 0;
@@ -33,6 +39,7 @@ let showTimeline = true;
 let showMonthTitles = true;
 let showMonthUnderlines = true;
 let showSideHeader = true;
+let showYearShadow = true;
 let showBottomWatermark = true;
 let showPhonePreview = false;
 let phoneResolution = "1080x2376";
@@ -221,10 +228,10 @@ const presetColors = [
     "#f46363",
     "#a45adf"
 ];
+const FIXED_PRESET_COLOR_COUNT = 4;
+const MAX_RECENT_COLOR_COUNT = 5;
 
-const customColorPicker = document.getElementById("customColorPicker");
 const backgroundImageInput = document.getElementById("backgroundImageInput");
-const textColorPicker = document.getElementById("textColorPicker");
 const currentWordCountElements = document.querySelectorAll("[data-current-word-count]");
 const subtitleInput = document.getElementById("subtitleInput");
 const sideSpacingInput = document.getElementById("sideSpacingInput");
@@ -232,6 +239,194 @@ const paragraphTitleSpacingInput = document.getElementById("paragraphTitleSpacin
 const moduleSpacingInput = document.getElementById("moduleSpacingInput");
 const topPaddingInput = document.getElementById("topPaddingInput");
 const sideHeaderReserveInput = document.getElementById("sideHeaderReserveInput");
+const customColorModalBackdrop = document.getElementById("customColorModalBackdrop");
+const colorPickerControls = {
+    background: {
+        panel: document.getElementById("backgroundCustomColorPanel"),
+        field: document.getElementById("backgroundColorField"),
+        hue: document.getElementById("backgroundHueRange"),
+        chip: document.getElementById("backgroundColorPreviewChip"),
+        hex: document.getElementById("backgroundHexInput"),
+        red: document.getElementById("backgroundRedInput"),
+        green: document.getElementById("backgroundGreenInput"),
+        blue: document.getElementById("backgroundBlueInput"),
+        getValue: () => backgroundColor,
+        preview: applyBackgroundColorPreview,
+        commit: commitBackgroundColorPreview,
+        addRecent: (value) => {
+            recentBackgroundColors = addRecentColor(recentBackgroundColors, value);
+        }
+    },
+    text: {
+        panel: document.getElementById("textCustomColorPanel"),
+        field: document.getElementById("textColorField"),
+        hue: document.getElementById("textHueRange"),
+        chip: document.getElementById("textColorPreviewChip"),
+        hex: document.getElementById("textHexInput"),
+        red: document.getElementById("textRedInput"),
+        green: document.getElementById("textGreenInput"),
+        blue: document.getElementById("textBlueInput"),
+        getValue: () => textColor,
+        preview: applyTextColorPreview,
+        commit: commitTextColorPreview,
+        addRecent: (value) => {
+            recentTextColors = addRecentColor(recentTextColors, value);
+        }
+    }
+};
+const customColorPickerState = {
+    background: { hue: 0, saturation: 0, value: 0, originalColor: backgroundColor },
+    text: { hue: 0, saturation: 0, value: 0, originalColor: textColor }
+};
+let activeCustomColorTarget = null;
+
+function normalizeColorValue(value) {
+    if (typeof value !== "string") return "";
+
+    const color = value.trim().toLowerCase();
+    return /^#[0-9a-f]{6}$/.test(color) ? color : "";
+}
+
+function normalizeRecentColors(colors) {
+    if (!Array.isArray(colors)) return [];
+
+    const seen = new Set();
+    const normalized = [];
+
+    colors.forEach((color) => {
+        const normalizedColor = normalizeColorValue(color);
+        if (!normalizedColor || seen.has(normalizedColor)) return;
+
+        seen.add(normalizedColor);
+        normalized.push(normalizedColor);
+    });
+
+    return normalized.slice(0, MAX_RECENT_COLOR_COUNT);
+}
+
+function addRecentColor(colors, value) {
+    const normalizedColor = normalizeColorValue(value);
+    if (!normalizedColor) return colors;
+
+    return [
+        normalizedColor,
+        ...normalizeRecentColors(colors).filter((color) => color !== normalizedColor)
+    ].slice(0, MAX_RECENT_COLOR_COUNT);
+}
+
+function clampNumber(value, min, max) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return min;
+
+    return Math.min(Math.max(number, min), max);
+}
+
+function componentToHex(value) {
+    return Math.round(clampNumber(value, 0, 255)).toString(16).padStart(2, "0");
+}
+
+function rgbToHex({ r, g, b }) {
+    return `#${componentToHex(r)}${componentToHex(g)}${componentToHex(b)}`;
+}
+
+function hexToRgb(value) {
+    const color = normalizeColorValue(value);
+    if (!color) return null;
+
+    return {
+        r: parseInt(color.slice(1, 3), 16),
+        g: parseInt(color.slice(3, 5), 16),
+        b: parseInt(color.slice(5, 7), 16)
+    };
+}
+
+function rgbToHsv({ r, g, b }) {
+    const red = clampNumber(r, 0, 255) / 255;
+    const green = clampNumber(g, 0, 255) / 255;
+    const blue = clampNumber(b, 0, 255) / 255;
+    const max = Math.max(red, green, blue);
+    const min = Math.min(red, green, blue);
+    const delta = max - min;
+    let hue = 0;
+
+    if (delta !== 0) {
+        if (max === red) {
+            hue = 60 * (((green - blue) / delta) % 6);
+        } else if (max === green) {
+            hue = 60 * ((blue - red) / delta + 2);
+        } else {
+            hue = 60 * ((red - green) / delta + 4);
+        }
+    }
+
+    return {
+        hue: Math.round((hue + 360) % 360),
+        saturation: max === 0 ? 0 : Math.round((delta / max) * 100),
+        value: Math.round(max * 100)
+    };
+}
+
+function hsvToRgb({ hue, saturation, value }) {
+    const h = clampNumber(hue, 0, 360);
+    const s = clampNumber(saturation, 0, 100) / 100;
+    const v = clampNumber(value, 0, 100) / 100;
+    const chroma = v * s;
+    const x = chroma * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = v - chroma;
+    let red = 0;
+    let green = 0;
+    let blue = 0;
+
+    if (h < 60) {
+        red = chroma;
+        green = x;
+    } else if (h < 120) {
+        red = x;
+        green = chroma;
+    } else if (h < 180) {
+        green = chroma;
+        blue = x;
+    } else if (h < 240) {
+        green = x;
+        blue = chroma;
+    } else if (h < 300) {
+        red = x;
+        blue = chroma;
+    } else {
+        red = chroma;
+        blue = x;
+    }
+
+    return {
+        r: Math.round((red + m) * 255),
+        g: Math.round((green + m) * 255),
+        b: Math.round((blue + m) * 255)
+    };
+}
+
+function getCustomPickerColor(target) {
+    return rgbToHex(hsvToRgb(customColorPickerState[target]));
+}
+
+function buildPaletteColors(recentColors) {
+    const fixedColors = presetColors.slice(0, FIXED_PRESET_COLOR_COUNT);
+    const normalizedRecentColors = normalizeRecentColors(recentColors);
+    const fallbackColors = presetColors
+        .slice(FIXED_PRESET_COLOR_COUNT)
+        .filter((color) => !normalizedRecentColors.includes(color.toLowerCase()));
+    const recentSlots = [
+        ...normalizedRecentColors,
+        ...fallbackColors
+    ].slice(0, MAX_RECENT_COLOR_COUNT);
+
+    return [
+        ...fixedColors.map((color) => ({ color, isRecent: false })),
+        ...recentSlots.map((color) => ({
+            color,
+            isRecent: normalizedRecentColors.includes(color.toLowerCase())
+        }))
+    ];
+}
 
 const fallbackFontOptions = [
     { label: "默认字体", value: '"Microsoft YaHei",sans-serif' },
@@ -292,25 +487,33 @@ const chineseFontLabels = new Map([
 
 let data = [
     {
-        title: "段落一",
-        text: "Loading...",
+        type: "text",
+        title: "文字段落一",
+        titlePlaceholder: CARD_TITLE_PLACEHOLDER,
+        text: "",
         titleSize: 70,  // 段落标题
         textSize: 48,   // 段落内容
         titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
         contentFontFamily: INHERIT_FONT_VALUE,
         contentFontToolbarValue: INHERIT_FONT_VALUE,
+        titleAlign: "left",
+        textAlign: "left",
         hidden: false,
         lineSpacing: 1.8,
         paragraphSpacing: 0
     },
     {
-        title: "段落二",
-        text: "Loading...",
+        type: "text",
+        title: "文字段落二",
+        titlePlaceholder: CARD_TITLE_PLACEHOLDER,
+        text: "",
         titleSize: 70,
         textSize: 48,
         titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
         contentFontFamily: INHERIT_FONT_VALUE,
         contentFontToolbarValue: INHERIT_FONT_VALUE,
+        titleAlign: "left",
+        textAlign: "left",
         hidden: false,
         lineSpacing: 1.8,
         paragraphSpacing: 0
@@ -334,6 +537,39 @@ let backgroundImageCanvasCache = {
     image: null
 };
 const richTextSelections = new Map();
+const TEXT_ALIGN_VALUES = Object.freeze(["left", "center", "right"]);
+const TEXT_ALIGN_LABELS = Object.freeze({
+    left: "左对齐",
+    center: "居中",
+    right: "右对齐"
+});
+
+const {
+    CARD_TYPE_IMAGE,
+    createTextCard,
+    createImageCard,
+    isImageCard,
+    normalizeData,
+    compressCardImageFile,
+    waitForPosterImagesLoaded,
+    renderPreviewCard,
+    renderTextCardEditorBody,
+    renderImageCardEditorBody
+} = window.ArticleParagraphs.createParagraphModule({
+    CARD_TITLE_DEFAULT_FONT_FAMILY,
+    INHERIT_FONT_VALUE,
+    escapeHtml,
+    plainTextToRichText,
+    sanitizeRichText,
+    normalizeTextAlign,
+    renderRichTextPreview,
+    renderTextAlignControls,
+    resolveCardTitleFontFamily,
+    resolveCardContentFontFamily,
+    getItemLineSpacing,
+    getItemParagraphSpacing,
+    renderFontOptionElements
+});
 
 function loadState() {
     try {
@@ -379,6 +615,9 @@ function loadState() {
             textColor = state.textColor;
         }
 
+        recentBackgroundColors = normalizeRecentColors(state.recentBackgroundColors);
+        recentTextColors = normalizeRecentColors(state.recentTextColors);
+
         if (typeof state.yearFontFamily === "string") {
             yearFontFamily = state.yearFontFamily;
         }
@@ -390,6 +629,9 @@ function loadState() {
         if (typeof state.sideFontFamily === "string") {
             sideFontFamily = state.sideFontFamily;
         }
+
+        yearTextAlign = normalizeTextAlign(state.yearTextAlign);
+        subtitleTextAlign = normalizeTextAlign(state.subtitleTextAlign);
 
         if (typeof state.lineSpacing === "number") {
             lineSpacing = state.lineSpacing;
@@ -430,9 +672,8 @@ function loadState() {
         }));
 
         if (typeof state.subtitle === "string") {
-            const subtitleEl = document.getElementById("subtitle");
-            if (subtitleEl) {
-                subtitleEl.innerText = state.subtitle;
+            if (subtitleInput) {
+                subtitleInput.value = state.subtitle;
             }
         }
 
@@ -462,6 +703,9 @@ function loadState() {
         if (typeof state.showSideHeader === "boolean") {
             showSideHeader = state.showSideHeader;
         }
+        if (typeof state.showYearShadow === "boolean") {
+            showYearShadow = state.showYearShadow;
+        }
         if (typeof state.showBottomWatermark === "boolean") {
             showBottomWatermark = state.showBottomWatermark;
         }
@@ -480,30 +724,6 @@ function loadState() {
     } catch (error) {
         // Ignore malformed or unavailable storage.
     }
-}
-
-function normalizeData(items, schemaVersion) {
-    const shouldNormalizeFontSizes = !schemaVersion || schemaVersion < 4;
-    const shouldEscapeText = !schemaVersion || schemaVersion < 5;
-
-    return items.map((item) => {
-        const titleSize = typeof item.titleSize === "number" ? item.titleSize : 48;
-        const textSize = typeof item.textSize === "number" ? item.textSize : 18;
-        const text = typeof item.text === "string" ? item.text : "";
-
-        return {
-            ...item,
-            text: shouldEscapeText ? plainTextToRichText(text) : sanitizeRichText(text),
-            titleSize: shouldNormalizeFontSizes ? Math.max(titleSize, 48) : titleSize,
-            textSize: shouldNormalizeFontSizes ? Math.max(textSize, 18) : textSize,
-            titleFontFamily: typeof item.titleFontFamily === "string" ? item.titleFontFamily : CARD_TITLE_DEFAULT_FONT_FAMILY,
-            contentFontFamily: typeof item.contentFontFamily === "string" ? item.contentFontFamily : INHERIT_FONT_VALUE,
-            contentFontToolbarValue: typeof item.contentFontToolbarValue === "string"
-                ? item.contentFontToolbarValue
-                : (typeof item.contentFontFamily === "string" ? item.contentFontFamily : INHERIT_FONT_VALUE),
-            hidden: item.hidden === true
-        };
-    });
 }
 
 function escapeHtml(value) {
@@ -601,7 +821,7 @@ function countTextUnits(value) {
 
 function getCurrentParagraphWordCount() {
     return data.reduce((total, item, index) => {
-        if (item?.hidden) return total;
+        if (item?.hidden || isImageCard(item)) return total;
 
         const pendingText = pendingMobileTextInputs.has(index)
             ? pendingMobileTextInputs.get(index)
@@ -936,18 +1156,33 @@ function collectTypesetTokens(root, node = root, tokens = []) {
         return tokens;
     }
 
+    if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains("typesetLineShadow")) {
+        return tokens;
+    }
+
     Array.from(node.childNodes).forEach((child) => collectTypesetTokens(root, child, tokens));
     return tokens;
 }
 
-function createTypesetLineElement(tokens, adjustment = null) {
+function createTypesetLineElement(tokens, adjustment = null, { includeShadow = false, align = "left" } = {}) {
     const line = document.createElement("span");
     const inner = document.createElement("span");
+    const textAlign = normalizeTextAlign(align);
     line.className = "typesetLine";
     inner.className = "typesetLineInner";
+    line.style.textAlign = textAlign;
+    inner.style.transformOrigin = getTypesetTransformOrigin(textAlign);
 
     if (adjustment?.type === "scale") {
         inner.style.transform = `scaleX(${adjustment.scale})`;
+    }
+
+    if (includeShadow && tokens.length) {
+        const shadow = document.createElement("span");
+        shadow.className = "typesetLineShadow";
+        shadow.setAttribute("aria-hidden", "true");
+        shadow.textContent = tokens.map((token) => token.text === " " ? "\u00a0" : (token.text || "")).join("");
+        inner.appendChild(shadow);
     }
 
     tokens.forEach((token, index) => {
@@ -1454,6 +1689,24 @@ async function flushDeferredPosterTypesetting() {
     });
 }
 
+function getCssPixelValue(value) {
+    const number = parseFloat(value || "");
+    return Number.isFinite(number) ? number : null;
+}
+
+function getPosterYearAvailableWidth(element, padding) {
+    const poster = element.closest(".posterRoot");
+    const header = element.parentElement;
+    const titleMaxWidth = poster
+        ? getCssPixelValue(window.getComputedStyle(poster).getPropertyValue("--headline-title-max-width"))
+        : null;
+    const headerWidth = header
+        ? header.getBoundingClientRect().width
+        : null;
+
+    return Math.max(1, (titleMaxWidth || headerWidth || element.getBoundingClientRect().width) - padding);
+}
+
 function getTypesetAvailableWidth(element) {
     const style = window.getComputedStyle(element);
     const padding = parseFloat(style.paddingLeft || "0") + parseFloat(style.paddingRight || "0");
@@ -1463,7 +1716,7 @@ function getTypesetAvailableWidth(element) {
         : ownWidth;
 
     if (element.matches(".posterYear")) {
-        return Math.max(1, parentWidth || ownWidth);
+        return getPosterYearAvailableWidth(element, padding);
     }
 
     return Math.max(1, Math.min(ownWidth || parentWidth, parentWidth || ownWidth));
@@ -1485,7 +1738,8 @@ function syncHeadlineTextWidths(poster = document.getElementById("poster")) {
     const paddingLeft = parseFloat(posterStyle.paddingLeft || "0");
     const paddingRight = parseFloat(posterStyle.paddingRight || "0");
     const contentWidth = Math.max(1, poster.clientWidth - paddingLeft - paddingRight);
-    let rightLimit = contentWidth - sideSpacing;
+    let leftLimit = showSideHeader ? sideSpacing : 0;
+    let rightLimit = showSideHeader ? contentWidth - sideSpacing : contentWidth;
 
     if (showSideHeader && side && window.getComputedStyle(side).display !== "none") {
         const posterRect = poster.getBoundingClientRect();
@@ -1494,7 +1748,9 @@ function syncHeadlineTextWidths(poster = document.getElementById("poster")) {
         rightLimit = sideLeftInContent - sideSpacing;
     }
 
-    const titleMaxWidth = Math.max(1, rightLimit - sideSpacing);
+    const titleOffset = Math.max(0, leftLimit);
+    const titleMaxWidth = Math.max(1, rightLimit - titleOffset);
+    poster.style.setProperty("--headline-title-offset", `${titleOffset}px`);
     poster.style.setProperty("--headline-title-max-width", `${titleMaxWidth}px`);
 
     if (subtitlePosition === "verticalLeft" || !subtitle) {
@@ -1687,9 +1943,11 @@ function buildTypesetLines(tokens, root, maxWidth, { strategy = TYPESET_ADJUST_S
 
 function renderTypesetLines(element, lines) {
     const fragment = document.createDocumentFragment();
+    const includeShadow = element.matches(".posterYear");
+    const align = normalizeTextAlign(window.getComputedStyle(element).textAlign);
 
     lines.forEach((line) => {
-        fragment.appendChild(createTypesetLineElement(line.tokens, line.adjustment));
+        fragment.appendChild(createTypesetLineElement(line.tokens, line.adjustment, { includeShadow, align }));
     });
 
     element.innerHTML = "";
@@ -1745,7 +2003,9 @@ function typesetSingleLineFirstElement(element, options = {}) {
 
     element.innerHTML = "";
     element.classList.add("typesetText");
-    element.appendChild(createTypesetLineElement(tokens, adjustment));
+    element.appendChild(createTypesetLineElement(tokens, adjustment, {
+        align: window.getComputedStyle(element).textAlign
+    }));
 }
 
 function applyPosterTypesetting(poster = document.getElementById("poster")) {
@@ -1792,9 +2052,13 @@ function buildPersistedState() {
         backgroundImageName,
         backgroundImageBlendEdge,
         textColor,
+        recentBackgroundColors,
+        recentTextColors,
         yearFontFamily,
         subtitleFontFamily,
         sideFontFamily,
+        yearTextAlign,
+        subtitleTextAlign,
         lineSpacing,
         paragraphSpacing,
         sideSpacing,
@@ -1805,14 +2069,15 @@ function buildPersistedState() {
         showMonthTitles,
         showMonthUnderlines,
         showSideHeader,
+        showYearShadow,
         showBottomWatermark,
         showPhonePreview,
         phoneResolution,
         phonePreviewScale,
         subtitlePosition,
-        yearTitle: document.getElementById("yearInput")?.value ?? "输入标题",
-        sideHeader: document.getElementById("sideInput")?.value ?? "输入竖排标题",
-        subtitle: document.getElementById("subtitleInput")?.value ?? "作者：",
+        yearTitle: document.getElementById("yearInput")?.value ?? "",
+        sideHeader: document.getElementById("sideInput")?.value ?? "",
+        subtitle: document.getElementById("subtitleInput")?.value ?? "",
         schemaVersion: STATE_SCHEMA_VERSION
     };
 }
@@ -1949,6 +2214,115 @@ function resolveSideFontFamily() {
     return resolvePosterTextFontFamily(sideFontFamily);
 }
 
+function normalizeTextAlign(value) {
+    return TEXT_ALIGN_VALUES.includes(value) ? value : "left";
+}
+
+function applyTextAlign(element, align) {
+    if (!element) return;
+
+    const textAlign = normalizeTextAlign(align);
+    element.style.textAlign = textAlign;
+    element.dataset.textAlign = textAlign;
+}
+
+function getTypesetTransformOrigin(align) {
+    const textAlign = normalizeTextAlign(align);
+    if (textAlign === "right") return "right center";
+    if (textAlign === "center") return "center center";
+    return "left center";
+}
+
+function applyTypesetLineAlignment(element, align) {
+    if (!element) return;
+
+    const textAlign = normalizeTextAlign(align);
+    applyTextAlign(element, textAlign);
+    element.querySelectorAll(".typesetLine").forEach((line) => {
+        line.style.textAlign = textAlign;
+    });
+    element.querySelectorAll(".typesetLineInner").forEach((inner) => {
+        inner.style.transformOrigin = getTypesetTransformOrigin(textAlign);
+    });
+}
+
+function renderHeadlineAlignControl(target) {
+    const container = document.getElementById(`${target}AlignControls`);
+    if (!container) return;
+
+    const align = target === "year" ? yearTextAlign : subtitleTextAlign;
+    container.innerHTML = renderTextAlignControls(target, align, {
+        disabled: target === "subtitle" && subtitlePosition === "verticalLeft"
+    });
+}
+
+function applyHeadlineTextAlignPreview(target) {
+    const element = target === "year"
+        ? document.getElementById("year")
+        : document.getElementById("subtitle");
+    const align = target === "year"
+        ? yearTextAlign
+        : (subtitlePosition === "verticalLeft" ? "left" : subtitleTextAlign);
+
+    applyTypesetLineAlignment(element, align);
+    renderHeadlineAlignControl(target);
+    schedulePhonePreviewSync();
+    saveState();
+}
+
+function renderCardAlignControl(target) {
+    const [type, rawIndex] = String(target || "").split(":");
+    const index = Number(rawIndex);
+    if (!Number.isInteger(index) || !data[index]) return;
+
+    const block = document.querySelector(`.block[data-card-editor-index="${index}"]`);
+    const container = block?.querySelector(`[data-align-control-target="${target}"]`);
+    if (!container) return;
+
+    const align = type === "cardTitle" ? data[index].titleAlign : data[index].textAlign;
+    container.innerHTML = renderTextAlignControls(target, align);
+}
+
+function applyCardTextAlignPreview(index, type) {
+    const card = document.querySelector(`#cards .card[data-card-index="${index}"]`);
+    if (!card) {
+        scheduleCardPreviewRender(index);
+        return;
+    }
+
+    const selector = type === "cardTitle" ? ".cardTitle" : ".info";
+    const element = card.querySelector(selector);
+    const align = type === "cardTitle" ? data[index]?.titleAlign : data[index]?.textAlign;
+    if (!element || !align) {
+        scheduleCardPreviewRender(index);
+        return;
+    }
+
+    applyTypesetLineAlignment(element, align);
+    renderCardAlignControl(`${type}:${index}`);
+    schedulePhonePreviewSync();
+    saveState();
+}
+
+function renderTextAlignControls(target, selectedValue, { disabled = false } = {}) {
+    const selectedAlign = normalizeTextAlign(selectedValue);
+    const disabledAttribute = disabled ? " disabled" : "";
+
+    return `
+        <div class="textAlignControls" role="group" aria-label="对齐方式">
+            ${TEXT_ALIGN_VALUES.map((align) => `
+                <button
+                    type="button"
+                    class="${align === selectedAlign ? "active" : ""}"
+                    title="${TEXT_ALIGN_LABELS[align]}"
+                    aria-label="${TEXT_ALIGN_LABELS[align]}"
+                    onclick="changeTextAlign('${target}','${align}')"
+                    ${disabledAttribute}>${TEXT_ALIGN_LABELS[align]}</button>
+            `).join("")}
+        </div>
+    `;
+}
+
 function resolveCardContentFontFamily(item) {
     return item?.contentFontFamily && item.contentFontFamily !== INHERIT_FONT_VALUE
         ? item.contentFontFamily
@@ -2045,22 +2419,6 @@ async function loadSystemFonts() {
    Render
 =========================== */
 
-function renderPreviewCard(item, index, previewFontScale = getPreviewFontScale()) {
-    const titleText = escapeHtml(item.title);
-    const textHtml = renderRichTextPreview(item.text, { sanitize: false });
-    const itemLineSpacing = getItemLineSpacing(item);
-    const itemParagraphSpacing = getItemParagraphSpacing(item);
-
-    return `
-        <div class="card" data-card-index="${index}">
-            <div class="cardTitle" style="font-size:${item.titleSize * previewFontScale}px;font-family:${escapeHtml(resolveCardTitleFontFamily(item))};">${titleText}</div>
-            <div class="cardContent">
-                <div class="info" style="font-size:${item.textSize * previewFontScale}px;font-family:${escapeHtml(resolveCardContentFontFamily(item))};--content-line-height:${itemLineSpacing};--content-paragraph-spacing:${itemParagraphSpacing}px;">${textHtml}</div>
-            </div>
-        </div>
-        `;
-}
-
 function renderPosterCards(poster, previewFontScale = getPreviewFontScale()) {
     const cards = getPosterPart(poster, "cards");
     if (!cards) return;
@@ -2068,6 +2426,26 @@ function renderPosterCards(poster, previewFontScale = getPreviewFontScale()) {
     cards.innerHTML = data
         .map((item, index) => item.hidden ? "" : renderPreviewCard(item, index, previewFontScale))
         .join("");
+    bindCardImageLoadHandlers(cards);
+}
+
+function handleCardImageLoaded() {
+    syncCardsOffset();
+    schedulePosterBackgroundSync(document.getElementById("poster"));
+    schedulePhonePreviewSync();
+    saveState();
+}
+
+function bindCardImageLoadHandlers(root) {
+    Array.from(root?.querySelectorAll(".cardImage") || []).forEach((image) => {
+        if (image.dataset.loadHandlerBound === "true") return;
+
+        image.dataset.loadHandlerBound = "true";
+        image.addEventListener("load", handleCardImageLoaded, { once: true });
+        if (image.complete && image.naturalWidth > 0) {
+            handleCardImageLoaded();
+        }
+    });
 }
 
 function renderPreviewCardByIndex(index, { deferTypesetting = false } = {}) {
@@ -2080,7 +2458,7 @@ function renderPreviewCardByIndex(index, { deferTypesetting = false } = {}) {
     }
 
     const template = document.createElement("template");
-    template.innerHTML = renderPreviewCard(item, index).trim();
+    template.innerHTML = renderPreviewCard(item, index, getPreviewFontScale()).trim();
     const nextCard = template.content.firstElementChild;
 
     if (!nextCard) {
@@ -2089,6 +2467,7 @@ function renderPreviewCardByIndex(index, { deferTypesetting = false } = {}) {
     }
 
     existingCard.replaceWith(nextCard);
+    bindCardImageLoadHandlers(nextCard);
 
     if (deferTypesetting) {
         markMobileTypesettingDirty();
@@ -2151,6 +2530,7 @@ function renderHeaderInputPreview() {
         yearElement.style.fontFamily = resolveYearFontFamily();
         yearElement.style.color = textColor;
         yearElement.style.fontSize = globalFont.year * previewFontScale + "px";
+        applyTextAlign(yearElement, yearTextAlign);
     }
 
     if (subtitleElement) {
@@ -2158,6 +2538,7 @@ function renderHeaderInputPreview() {
         subtitleElement.style.fontFamily = resolveSubtitleFontFamily();
         subtitleElement.style.color = textColor;
         applySubtitleSettings(subtitleElement, previewFontScale);
+        applyTextAlign(subtitleElement, subtitlePosition === "verticalLeft" ? "left" : subtitleTextAlign);
         renderVerticalTextTarget("subtitle");
     }
 
@@ -2195,6 +2576,7 @@ function applyPosterContainerState(poster) {
     poster.classList.toggle("hideMonthTitles", !showMonthTitles);
     poster.classList.toggle("hideMonthUnderlines", !showMonthUnderlines);
     poster.classList.toggle("hideSideHeader", !showSideHeader);
+    poster.classList.toggle("hideYearShadow", !showYearShadow);
     poster.classList.toggle("subtitleVerticalLeft", subtitlePosition === "verticalLeft");
 }
 
@@ -2213,10 +2595,12 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
 
     const yearElement = document.getElementById("year");
     const yearText = document.getElementById("yearInput").value;
+    yearElement.classList.remove("typesetText");
     yearElement.innerText = yearText;
     yearElement.dataset.shadowText = yearText;
     yearElement.style.fontFamily = resolveYearFontFamily();
     yearElement.style.color = textColor;
+    applyTextAlign(yearElement, yearTextAlign);
 
     const sideElement = document.getElementById("side");
     sideElement.style.fontFamily = resolveSideFontFamily();
@@ -2256,6 +2640,7 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
         subtitleElement.style.fontFamily = resolveSubtitleFontFamily();
         subtitleElement.style.color = textColor;
         applySubtitleSettings(subtitleElement, previewFontScale);
+        applyTextAlign(subtitleElement, subtitlePosition === "verticalLeft" ? "left" : subtitleTextAlign);
     }
 
     renderVerticalTextTarget("subtitle");
@@ -2286,13 +2671,6 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
         requestAnimationFrame(() => {
             syncCardsOffset();
         });
-    }
-
-    if (subtitleInput) {
-        const subtitleEl = document.getElementById("subtitle");
-        if (subtitlePosition !== "verticalLeft" && subtitleEl && subtitleInput.value !== subtitleEl.innerText) {
-            subtitleInput.value = subtitleEl.innerText;
-        }
     }
 
     if (sideSpacingInput && Number(sideSpacingInput.value) !== sideSpacing) {
@@ -2363,6 +2741,8 @@ function getPhoneRenderSignature() {
         yearFontFamily,
         subtitleFontFamily,
         sideFontFamily,
+        yearTextAlign,
+        subtitleTextAlign,
         lineSpacing,
         paragraphSpacing,
         sideSpacing,
@@ -2374,6 +2754,7 @@ function getPhoneRenderSignature() {
         showMonthTitles,
         showMonthUnderlines,
         showSideHeader,
+        showYearShadow,
         showBottomWatermark,
         subtitlePosition,
         phoneResolution,
@@ -2403,6 +2784,7 @@ function setPosterSharedState(poster, previewFontScale = getPreviewFontScale()) 
         year.style.fontFamily = resolveYearFontFamily();
         year.style.color = textColor;
         year.style.fontSize = `${globalFont.year * previewFontScale}px`;
+        applyTextAlign(year, yearTextAlign);
         year.classList.remove("typesetText");
     }
 
@@ -2411,6 +2793,7 @@ function setPosterSharedState(poster, previewFontScale = getPreviewFontScale()) 
         subtitle.style.fontFamily = resolveSubtitleFontFamily();
         subtitle.style.color = textColor;
         applySubtitleSettings(subtitle, previewFontScale);
+        applyTextAlign(subtitle, subtitlePosition === "verticalLeft" ? "left" : subtitleTextAlign);
         subtitle.classList.remove("typesetText");
         renderVerticalTextTarget("subtitle", subtitleInputElement?.value || "", poster);
     }
@@ -2471,6 +2854,7 @@ async function ensurePhoneRenderLayout() {
 
         host.replaceChildren(nextPoster);
         setPosterSharedState(nextPoster);
+        await waitForPosterImagesLoaded(nextPoster);
         syncHeadlineTextWidths(nextPoster);
         applyPosterTypesetting(nextPoster);
         syncCardsOffset(nextPoster);
@@ -2621,9 +3005,12 @@ function renderEditor() {
         const contentFontOptions = renderFontOptionElements(contentFontToolbarValue, [
             { label: "默认内容字体", value: INHERIT_FONT_VALUE }
         ]);
+        const cardBodyHtml = isImageCard(item)
+            ? renderImageCardEditorBody(item, index)
+            : renderTextCardEditorBody(item, index, textHtml, contentFontOptions, contentFontToolbarValue);
 
         html += `
-        <div class="block${item.hidden ? " hiddenBlock" : ""}">
+        <div class="block${item.hidden ? " hiddenBlock" : ""}" data-card-editor-index="${index}">
             <div class="blockHeader">
                 <h3>第 ${index + 1} 段${item.hidden ? "（已隐藏）" : ""}</h3>
                 <div class="blockHeaderActions">
@@ -2631,58 +3018,31 @@ function renderEditor() {
                     <button type="button" class="deleteBtn" onclick="deleteCard(${index})">删除段落</button>
                 </div>
             </div>
-            <label class="inlineLabel">标题 <span class="sizeValue" data-card-index="${index}" data-size-type="title">${item.titleSize}px</span></label>
-            <button onclick="changeTitleSize(${index},-2)">A-</button>
-            <button onclick="changeTitleSize(${index},2)">A+</button>
+            <div class="blockSizeControlRow">
+                <label class="inlineLabel">标题 <span class="sizeValue" data-card-index="${index}" data-size-type="title">${item.titleSize}px</span></label>
+                <div class="blockSizeButtons">
+                    <button type="button" onclick="changeTitleSize(${index},-2)">A-</button>
+                    <button type="button" onclick="changeTitleSize(${index},2)">A+</button>
+                </div>
+            </div>
             <select class="fontSelect blockFontSelect" style="font-family:${escapeHtml(titleFontFamily)};" onchange="changeCardTitleFont(${index},this.value,this)">
                 ${titleFontOptions}
             </select>
-            <textarea rows="2" style="font-family:${escapeHtml(titleFontFamily)};" oninput="autoResizeTextarea(this);changeTitle(${index},this.value)">${titleText}</textarea>
-            <label class="inlineLabel">内容 <span class="sizeValue" data-card-index="${index}" data-size-type="text">${item.textSize}px</span></label>
-            <button onclick="changeTextSize(${index},-2)">A-</button>
-            <button onclick="changeTextSize(${index},2)">A+</button>
-            <div class="blockSpacingControls">
-                <label for="lineSpacingInput-${index}">
-                    行间距
-                    <input type="number" id="lineSpacingInput-${index}" min="1" max="3" step="0.1" value="${itemLineSpacing}" oninput="changeLineSpacing(${index},this.value)">
-                </label>
-                <label for="paragraphSpacingInput-${index}">
-                    段间距
-                    <input type="number" id="paragraphSpacingInput-${index}" min="0" max="80" step="2" value="${itemParagraphSpacing}" oninput="changeParagraphSpacing(${index},this.value)">
-                </label>
+            <div data-align-control-target="cardTitle:${index}">
+                ${renderTextAlignControls(`cardTitle:${index}`, item.titleAlign)}
             </div>
-            <div class="richTextBox">
-                <div class="richTextToolbar">
-                    <button type="button" title="粗体" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'bold')"><strong>B</strong></button>
-                    <button type="button" title="斜体" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'italic')"><em>I</em></button>
-                    <button type="button" title="下划线" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'underline')"><u>U</u></button>
-                    <button type="button" title="删除线" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'strikeThrough')"><s>S</s></button>
-                    <select
-                        class="fontSelect richTextFontSelect"
-                        style="font-family:${escapeHtml(contentFontToolbarValue === INHERIT_FONT_VALUE ? resolveCardContentFontFamily(item) : contentFontToolbarValue)};"
-                        title="选中文字字体"
-                        onmousedown="saveRichTextSelection(${index})"
-                        onchange="applyRichTextFont(${index},this.value,this)">
-                        ${contentFontOptions}
-                    </select>
-                </div>
-                <div
-                    id="contentEditor-${index}"
-                    class="richTextEditor"
-                    contenteditable="true"
-                    style="font-family:${escapeHtml(resolveCardContentFontFamily(item))};"
-                    oninput="changeText(${index},this.innerHTML)"
-                    onfocus="saveRichTextSelection(${index})"
-                    onkeyup="saveRichTextSelection(${index})"
-                    onmouseup="saveRichTextSelection(${index})"
-                    onpaste="pastePlainText(event)">${textHtml}</div>
-            </div>
+            <textarea rows="2" class="cardTitleInput" placeholder="${escapeHtml(item.titlePlaceholder || CARD_TITLE_PLACEHOLDER)}" style="font-family:${escapeHtml(titleFontFamily)};" oninput="autoResizeTextarea(this);changeTitle(${index},this.value)">${titleText}</textarea>
+            ${cardBodyHtml}
         </div>
         `;
     });
 
     document.getElementById("cardEditor").innerHTML = html;
     document.querySelectorAll("#cardEditor textarea").forEach(autoResizeTextarea);
+    document.querySelectorAll("#cardEditor .richTextEditor").forEach((editorEl) => {
+        editorEl.dataset.placeholder = CONTENT_EDITOR_PLACEHOLDER;
+        normalizeRichTextEditorPlaceholder(editorEl);
+    });
     updateCurrentWordCount();
 }
 
@@ -2727,14 +3087,26 @@ function renderHeadlineFontControls() {
             inputEl.style.fontFamily = control.resolvedFontFamily;
         }
     });
+
+    const yearAlignControls = document.getElementById("yearAlignControls");
+    if (yearAlignControls) {
+        yearAlignControls.innerHTML = renderTextAlignControls("year", yearTextAlign);
+    }
+
+    const subtitleAlignControls = document.getElementById("subtitleAlignControls");
+    if (subtitleAlignControls) {
+        subtitleAlignControls.innerHTML = renderTextAlignControls("subtitle", subtitleTextAlign, {
+            disabled: subtitlePosition === "verticalLeft"
+        });
+    }
 }
 
 function renderBackgroundPalette() {
     const palette = document.getElementById("bgPalette");
     if (!palette) return;
 
-    palette.innerHTML = presetColors
-        .map((color) => {
+    palette.innerHTML = buildPaletteColors(recentBackgroundColors)
+        .map(({ color }) => {
             const active = color.toLowerCase() === backgroundColor.toLowerCase();
             return `
                 <button
@@ -2760,9 +3132,7 @@ function renderBackgroundPalette() {
             </button>
         `;
 
-    if (customColorPicker && customColorPicker.value !== backgroundColor) {
-        customColorPicker.value = backgroundColor;
-    }
+    syncCustomPickerFromColor("background", backgroundColor);
 }
 
 function renderBackgroundImageControls() {
@@ -2790,8 +3160,8 @@ function renderTextColorPalette() {
     const palette = document.getElementById("textColorPalette");
     if (!palette) return;
 
-    palette.innerHTML = presetColors
-        .map((color) => {
+    palette.innerHTML = buildPaletteColors(recentTextColors)
+        .map(({ color }) => {
             const active = color.toLowerCase() === textColor.toLowerCase();
             return `
                 <button
@@ -2817,9 +3187,7 @@ function renderTextColorPalette() {
             </button>
         `;
 
-    if (textColorPicker && textColorPicker.value !== textColor) {
-        textColorPicker.value = textColor;
-    }
+    syncCustomPickerFromColor("text", textColor);
 }
 
 function updateTimelineButton() {
@@ -2853,6 +3221,11 @@ function updateTimelineButtons() {
     const sideHeaderButton = document.getElementById("sideHeaderToggleBtn");
     if (sideHeaderButton) {
         sideHeaderButton.innerText = showSideHeader ? "隐藏竖排标题" : "显示竖排标题";
+    }
+
+    const yearShadowButton = document.getElementById("yearShadowToggleBtn");
+    if (yearShadowButton) {
+        yearShadowButton.innerText = showYearShadow ? "隐藏标题阴影" : "显示标题阴影";
     }
 
     const subtitlePositionButton = document.getElementById("subtitlePositionToggleBtn");
@@ -3015,6 +3388,36 @@ function schedulePhonePreviewSync() {
    Edit Actions
 =========================== */
 
+function changeTextAlign(target, value) {
+    const align = normalizeTextAlign(value);
+
+    if (target === "year") {
+        yearTextAlign = align;
+        applyHeadlineTextAlignPreview("year");
+        return;
+    }
+
+    if (target === "subtitle") {
+        subtitleTextAlign = align;
+        applyHeadlineTextAlignPreview("subtitle");
+        return;
+    }
+
+    const [type, rawIndex] = String(target || "").split(":");
+    const index = Number(rawIndex);
+    if (!Number.isInteger(index) || !data[index]) return;
+
+    if (type === "cardTitle") {
+        data[index].titleAlign = align;
+    } else if (type === "cardText") {
+        data[index].textAlign = align;
+    } else {
+        return;
+    }
+
+    applyCardTextAlignPreview(index, type);
+}
+
 function changeTitle(index, value) {
     data[index].title = value;
 
@@ -3029,14 +3432,30 @@ function changeTitle(index, value) {
 function changeText(index, value) {
     if (!data[index]) return;
 
+    const normalizedValue = normalizeEmptyRichText(value);
+
     if (isMobileViewport()) {
-        scheduleMobileTextInputCommit(index, value);
+        scheduleMobileTextInputCommit(index, normalizedValue);
         return;
     }
 
-    data[index].text = sanitizeRichText(value);
+    data[index].text = sanitizeRichText(normalizedValue);
     scheduleCurrentWordCountUpdate();
     schedulePreviewRender(PREVIEW_RENDER_DELAY_MS, () => renderPreview({ deferTypesetting: true }));
+}
+
+function normalizeEmptyRichText(value) {
+    const html = sanitizeRichText(value);
+    return extractPlainTextFromRichText(html).trim() ? html : "";
+}
+
+function normalizeRichTextEditorPlaceholder(element) {
+    if (!element) return;
+
+    const html = normalizeEmptyRichText(element.innerHTML);
+    if (html === element.innerHTML) return;
+
+    element.innerHTML = html;
 }
 
 function getRichTextEditor(index) {
@@ -3290,6 +3709,122 @@ function commitBackgroundColorPreview() {
     saveState();
 }
 
+function getCustomPickerConfig(target) {
+    return colorPickerControls[target] || null;
+}
+
+function updateCustomPickerUi(target, { preview = true } = {}) {
+    const config = getCustomPickerConfig(target);
+    const state = customColorPickerState[target];
+    if (!config || !state) return;
+
+    const rgb = hsvToRgb(state);
+    const hex = rgbToHex(rgb);
+    const hue = Math.round(clampNumber(state.hue, 0, 360));
+    const saturation = Math.round(clampNumber(state.saturation, 0, 100));
+    const value = Math.round(clampNumber(state.value, 0, 100));
+
+    config.panel?.style.setProperty("--picker-hue", String(hue));
+    config.panel?.style.setProperty("--picker-saturation", String(saturation));
+    config.panel?.style.setProperty("--picker-value", String(value));
+    config.panel?.style.setProperty("--picker-color", hex);
+
+    if (config.hue && config.hue.value !== String(hue)) {
+        config.hue.value = String(hue);
+    }
+    if (config.hex && config.hex.value.toLowerCase() !== hex) {
+        config.hex.value = hex;
+    }
+    if (config.red && config.red.value !== String(rgb.r)) {
+        config.red.value = String(rgb.r);
+    }
+    if (config.green && config.green.value !== String(rgb.g)) {
+        config.green.value = String(rgb.g);
+    }
+    if (config.blue && config.blue.value !== String(rgb.b)) {
+        config.blue.value = String(rgb.b);
+    }
+
+    if (preview) {
+        config.preview(hex);
+    }
+}
+
+function setCustomPickerFromColor(target, color, options = {}) {
+    const rgb = hexToRgb(color);
+    const state = customColorPickerState[target];
+    if (!rgb || !state) return false;
+
+    const nextHsv = rgbToHsv(rgb);
+    state.hue = nextHsv.saturation === 0 ? state.hue : nextHsv.hue;
+    state.saturation = nextHsv.saturation;
+    state.value = nextHsv.value;
+    updateCustomPickerUi(target, options);
+    return true;
+}
+
+function syncCustomPickerFromColor(target, color) {
+    const config = getCustomPickerConfig(target);
+    if (!config || !config.panel?.hidden) return;
+
+    setCustomPickerFromColor(target, color, { preview: false });
+}
+
+function closeCustomColorPanels() {
+    Object.values(colorPickerControls).forEach((control) => {
+        if (!control.panel) return;
+
+        control.panel.hidden = true;
+        control.panel.classList.remove("mobileCustomColorModal");
+    });
+
+    if (customColorModalBackdrop) {
+        customColorModalBackdrop.hidden = true;
+    }
+
+    activeCustomColorTarget = null;
+}
+
+function openCustomColorPanel(target) {
+    const config = getCustomPickerConfig(target);
+    const state = customColorPickerState[target];
+    if (!config || !state) return;
+
+    closeCustomColorPanels();
+
+    state.originalColor = config.getValue();
+    setCustomPickerFromColor(target, state.originalColor, { preview: false });
+    if (config.panel) {
+        config.panel.classList.toggle("mobileCustomColorModal", isMobileViewport());
+        config.panel.hidden = false;
+    }
+    if (customColorModalBackdrop) {
+        customColorModalBackdrop.hidden = !isMobileViewport();
+    }
+    activeCustomColorTarget = target;
+}
+
+function cancelCustomColor(target) {
+    const config = getCustomPickerConfig(target);
+    const state = customColorPickerState[target];
+    if (!config || !state) return;
+
+    config.preview(state.originalColor);
+    closeCustomColorPanels();
+    config.commit();
+}
+
+function confirmCustomColor(target) {
+    const config = getCustomPickerConfig(target);
+    if (!config) return;
+
+    const color = getCustomPickerColor(target);
+    config.preview(color);
+    config.addRecent(color);
+    closeCustomColorPanels();
+    config.commit();
+}
+
 function changeBackgroundColor(value) {
     applyBackgroundColorPreview(value);
     renderBackgroundPalette();
@@ -3302,6 +3837,14 @@ function changeBackgroundColor(value) {
     }
 
     renderPreview();
+}
+
+function confirmBackgroundCustomColor() {
+    confirmCustomColor("background");
+}
+
+function cancelBackgroundCustomColor() {
+    cancelCustomColor("background");
 }
 
 function openBackgroundImagePicker() {
@@ -3343,6 +3886,9 @@ function changeBackgroundImage(file) {
 }
 
 function removeBackgroundImage() {
+    const ok = window.confirm("确定要移除背景图片吗？");
+    if (!ok) return;
+
     backgroundImageDataUrl = "";
     backgroundImageName = "";
     if (backgroundImageInput) {
@@ -3414,7 +3960,7 @@ function applyTextColorPreview(value) {
         poster.style.setProperty("--text-color", textColor);
     }
 
-    document.querySelectorAll("#year, #subtitle, #side, .cardTitle, .info").forEach(applyTextColorToElementTree);
+    document.querySelectorAll("#year, #subtitle, #side, .cardTitle, .info, .cardImagePlaceholder").forEach(applyTextColorToElementTree);
 }
 
 function commitTextColorPreview() {
@@ -3428,6 +3974,14 @@ function changeTextColor(value) {
     renderTextColorPalette();
     schedulePhonePreviewSync();
     saveState();
+}
+
+function confirmTextCustomColor() {
+    confirmCustomColor("text");
+}
+
+function cancelTextCustomColor() {
+    cancelCustomColor("text");
 }
 
 function changeLineSpacing(index, value) {
@@ -3514,6 +4068,14 @@ function toggleSideHeader() {
     scheduleMobileFastPreviewRender();
 }
 
+function toggleYearShadow() {
+    showYearShadow = !showYearShadow;
+    updateTimelineButtons();
+    document.querySelectorAll(".posterRoot").forEach(applyPosterContainerState);
+    schedulePhonePreviewSync();
+    saveState();
+}
+
 function toggleBottomWatermark() {
     showBottomWatermark = !showBottomWatermark;
     updateTimelineButtons();
@@ -3522,6 +4084,7 @@ function toggleBottomWatermark() {
 
 function toggleSubtitlePosition() {
     subtitlePosition = subtitlePosition === "verticalLeft" ? "belowTitle" : "verticalLeft";
+    renderHeadlineFontControls();
     scheduleMobileFastPreviewRender();
 }
 
@@ -3550,31 +4113,251 @@ function changePhonePreviewScale(delta) {
 }
 
 function openCustomColorPicker() {
-    if (customColorPicker) {
-        customColorPicker.click();
-    }
+    openCustomColorPanel("background");
 }
 
 function openTextColorPicker() {
-    if (textColorPicker) {
-        textColorPicker.click();
+    openCustomColorPanel("text");
+}
+
+function updateCustomPickerFromFieldEvent(target, event) {
+    const config = getCustomPickerConfig(target);
+    const state = customColorPickerState[target];
+    const rect = config?.field?.getBoundingClientRect();
+    if (!rect || !state) return;
+
+    state.saturation = clampNumber(((event.clientX - rect.left) / rect.width) * 100, 0, 100);
+    state.value = clampNumber((1 - (event.clientY - rect.top) / rect.height) * 100, 0, 100);
+    updateCustomPickerUi(target);
+}
+
+function bindCustomColorField(target) {
+    const config = getCustomPickerConfig(target);
+    if (!config?.field) return;
+
+    config.field.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        config.field.setPointerCapture?.(event.pointerId);
+        updateCustomPickerFromFieldEvent(target, event);
+    });
+
+    config.field.addEventListener("pointermove", (event) => {
+        if (event.buttons !== 1 && event.pressure === 0) return;
+        updateCustomPickerFromFieldEvent(target, event);
+    });
+}
+
+function bindCustomColorPanel(target) {
+    const config = getCustomPickerConfig(target);
+    const state = customColorPickerState[target];
+    if (!config || !state) return;
+
+    bindCustomColorField(target);
+
+    config.hue?.addEventListener("input", () => {
+        state.hue = clampNumber(config.hue.value, 0, 360);
+        updateCustomPickerUi(target);
+    });
+
+    config.hex?.addEventListener("input", () => {
+        const value = config.hex.value.trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+            setCustomPickerFromColor(target, value);
+        }
+    });
+
+    [config.red, config.green, config.blue].forEach((input) => {
+        input?.addEventListener("input", () => {
+            const hex = rgbToHex({
+                r: config.red?.value,
+                g: config.green?.value,
+                b: config.blue?.value
+            });
+            setCustomPickerFromColor(target, hex);
+        });
+    });
+
+    setCustomPickerFromColor(target, config.getValue(), { preview: false });
+}
+
+function syncCustomColorModalMode() {
+    if (!activeCustomColorTarget) return;
+
+    const config = getCustomPickerConfig(activeCustomColorTarget);
+    if (!config?.panel || config.panel.hidden) return;
+
+    const mobile = isMobileViewport();
+    config.panel.classList.toggle("mobileCustomColorModal", mobile);
+    if (customColorModalBackdrop) {
+        customColorModalBackdrop.hidden = !mobile;
     }
 }
 
+function addTextCard() {
+    data.push(createTextCard());
+    renderLayoutChangePreview();
+}
+
+function addImageCard() {
+    data.push(createImageCard());
+    renderLayoutChangePreview();
+}
+
 function addCard() {
-    data.push({
-        title: "新的作品",
-        text: "Loading...",
-        titleSize: 70,
-        textSize: 48,
-        titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
-        contentFontFamily: INHERIT_FONT_VALUE,
-        contentFontToolbarValue: INHERIT_FONT_VALUE,
-        hidden: false,
-        lineSpacing: 1.8,
-        paragraphSpacing: 0
+    addTextCard();
+}
+
+function openCardImagePicker(index) {
+    const input = document.getElementById(`cardImageInput-${index}`);
+    if (!input) return;
+
+    input.value = "";
+    input.click();
+}
+
+function createCardImageId() {
+    return `image-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getCardImages(item) {
+    if (!item || !isImageCard(item)) return [];
+    if (Array.isArray(item.images)) return item.images;
+    return item.imageDataUrl ? [item] : [];
+}
+
+function getPrimaryCardImage(images) {
+    return images[0] || {};
+}
+
+function syncImageCardLegacyFields(item) {
+    const images = getCardImages(item);
+    const primary = getPrimaryCardImage(images);
+
+    item.images = images;
+    item.imageDataUrl = primary.imageDataUrl || "";
+    item.imageName = primary.imageName || "";
+    item.imageMimeType = primary.imageMimeType || "";
+    item.imageOriginalMimeType = primary.imageOriginalMimeType || "";
+    item.imageHasTransparency = primary.imageHasTransparency === true;
+    item.imageBytes = primary.imageBytes || 0;
+    item.imageWidth = primary.imageWidth || 0;
+    item.imageHeight = primary.imageHeight || 0;
+}
+
+function updateCardImageAt(index, imageIndex, updater) {
+    if (!data[index] || !isImageCard(data[index])) return false;
+
+    const images = getCardImages(data[index]);
+    if (!images[imageIndex]) return false;
+
+    data[index].images = images.map((image, currentIndex) =>
+        currentIndex === imageIndex ? updater(image) : image
+    );
+    syncImageCardLegacyFields(data[index]);
+    return true;
+}
+
+async function changeCardImage(index, fileList) {
+    if (!data[index] || !isImageCard(data[index]) || !fileList) return;
+
+    const files = Array.from(fileList).filter(Boolean);
+    if (!files.length) return;
+
+    try {
+        const nextImages = [];
+
+        for (const file of files) {
+            const compressed = await compressCardImageFile(file);
+            if (!compressed) continue;
+
+            nextImages.push({
+                id: createCardImageId(),
+                imageDataUrl: compressed.dataUrl,
+                imageName: file.name || "图片",
+                imageMimeType: compressed.mimeType,
+                imageOriginalMimeType: compressed.originalMimeType,
+                imageHasTransparency: compressed.hasTransparency,
+                imageBytes: compressed.bytes,
+                imageWidth: compressed.width,
+                imageHeight: compressed.height,
+                imageWidthPercent: 100,
+                imageAlign: "center"
+            });
+        }
+
+        if (!nextImages.length) return;
+
+        data[index] = {
+            ...data[index],
+            images: [
+                ...getCardImages(data[index]),
+                ...nextImages
+            ]
+        };
+        syncImageCardLegacyFields(data[index]);
+        renderLayoutChangePreview();
+    } catch (error) {
+        window.alert(error?.message || "图片处理失败，请重试。");
+    }
+}
+
+function removeCardImage(index) {
+    if (!data[index] || !isImageCard(data[index])) return;
+
+    const ok = window.confirm("确定要清空这个段落的所有图片吗？");
+    if (!ok) return;
+
+    data[index] = createImageCard({
+        ...data[index],
+        images: [],
+        imageDataUrl: "",
+        imageName: "",
+        imageMimeType: "",
+        imageOriginalMimeType: "",
+        imageHasTransparency: false,
+        imageBytes: 0,
+        imageWidth: 0,
+        imageHeight: 0
     });
     renderLayoutChangePreview();
+}
+
+function removeCardImageAt(index, imageIndex) {
+    if (!data[index] || !isImageCard(data[index])) return;
+
+    const ok = window.confirm("确定要移除这张图片吗？");
+    if (!ok) return;
+
+    const images = getCardImages(data[index]).filter((_, currentIndex) => currentIndex !== imageIndex);
+    data[index] = createImageCard({
+        ...data[index],
+        images
+    });
+    syncImageCardLegacyFields(data[index]);
+    renderLayoutChangePreview();
+}
+
+function changeCardImageWidth(index, imageIndex, value) {
+    const nextValue = Number(value);
+    if (![50, 75, 100].includes(nextValue)) return;
+
+    if (!updateCardImageAt(index, imageIndex, (image) => ({
+        ...image,
+        imageWidthPercent: nextValue
+    }))) return;
+
+    scheduleCardPreviewRender(index);
+}
+
+function changeCardImageAlign(index, imageIndex, value) {
+    const nextValue = normalizeTextAlign(value || "center");
+
+    if (!updateCardImageAt(index, imageIndex, (image) => ({
+        ...image,
+        imageAlign: nextValue
+    }))) return;
+
+    scheduleCardPreviewRender(index);
 }
 
 function toggleCardHidden(index) {
@@ -3585,7 +4368,7 @@ function toggleCardHidden(index) {
 }
 
 function deleteCard(index) {
-    const ok = window.confirm("确定要删除这部作品吗？");
+    const ok = window.confirm("确定要删除这个段落吗？");
     if (!ok) return;
 
     data.splice(index, 1);
@@ -3753,23 +4536,14 @@ if (subtitleInput) {
     };
 }
 
-if (textColorPicker) {
-    textColorPicker.oninput = function () {
-        applyTextColorPreview(this.value);
-    };
-    textColorPicker.onchange = function () {
-        applyTextColorPreview(this.value);
-        commitTextColorPreview();
-    };
-}
+bindCustomColorPanel("background");
+bindCustomColorPanel("text");
 
-if (customColorPicker) {
-    customColorPicker.oninput = function () {
-        applyBackgroundColorPreview(this.value);
-    };
-    customColorPicker.onchange = function () {
-        applyBackgroundColorPreview(this.value);
-        commitBackgroundColorPreview();
+if (customColorModalBackdrop) {
+    customColorModalBackdrop.onclick = function () {
+        if (activeCustomColorTarget) {
+            cancelCustomColor(activeCustomColorTarget);
+        }
     };
 }
 
@@ -3833,6 +4607,8 @@ function scheduleViewportResizeCompletion() {
 }
 
 function handleViewportChange() {
+    syncCustomColorModalMode();
+
     if (viewportResizeRenderFrame === null) {
         viewportResizeRenderFrame = requestAnimationFrame(() => {
             viewportResizeRenderFrame = null;
@@ -4169,6 +4945,7 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
         if (document.fonts?.ready) {
             await document.fonts.ready;
         }
+        await waitForPosterImagesLoaded(exportState.poster);
 
         if (typeof beforeCapture === "function") {
             beforeCapture();
@@ -4212,6 +4989,7 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
                     clonedPoster.classList.toggle("hideMonthTitles", !showMonthTitles);
                     clonedPoster.classList.toggle("hideMonthUnderlines", !showMonthUnderlines);
                     clonedPoster.classList.toggle("hideSideHeader", !showSideHeader);
+                    clonedPoster.classList.toggle("hideYearShadow", !showYearShadow);
                     clonedPoster.classList.toggle("subtitleVerticalLeft", subtitlePosition === "verticalLeft");
                 }
 
@@ -4236,7 +5014,7 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
         }
 
         const canvas = await html2canvas(exportState.poster, captureOptions);
-        const protectedRanges = expectedInkRanges ?? getProtectedTextRanges(canvas, exportState.poster);
+        const protectedRanges = expectedInkRanges ?? getExpectedPosterInkRanges(canvas, exportState.poster);
         console.info("Poster capture result", {
             canvasWidth: canvas.width,
             canvasHeight: canvas.height,
@@ -4591,6 +5369,29 @@ function getProtectedTextRanges(sourceCanvas, poster = document.getElementById("
         .sort((a, b) => a.top - b.top);
 }
 
+function getProtectedImageRanges(sourceCanvas, poster = document.getElementById("poster"), { padding = 0, contentSliceHeight = null } = {}) {
+    const ranges = getElementCanvasRanges(
+        Array.from(poster?.querySelectorAll(".cardImage") || [])
+            .filter((element) => element.complete && element.naturalWidth > 0),
+        sourceCanvas,
+        padding,
+        poster
+    );
+
+    return ranges.map((range) => ({
+        ...range,
+        type: "image",
+        canSplit: Number.isFinite(contentSliceHeight) && range.bottom - range.top > contentSliceHeight
+    }));
+}
+
+function getExpectedPosterInkRanges(sourceCanvas, poster = document.getElementById("poster")) {
+    return [
+        ...getProtectedTextRanges(sourceCanvas, poster),
+        ...getProtectedImageRanges(sourceCanvas, poster)
+    ].sort((a, b) => a.top - b.top);
+}
+
 function getSlicedExportContentBottom(sourceCanvas, poster = document.getElementById("poster")) {
     if (!sourceCanvas?.height || !poster) return sourceCanvas?.height || 1;
 
@@ -4649,7 +5450,7 @@ function mergeCanvasColumns(columns) {
 function getTextScanColumns(sourceCanvas, poster = document.getElementById("poster")) {
     const scale = getCanvasScale(sourceCanvas, poster);
     const padding = Math.max(3, Math.round(6 * scale));
-    const selectors = [".posterYear", ".posterSubtitle", ".cardTitle", ".info"];
+    const selectors = [".posterYear", ".posterSubtitle", ".cardTitle", ".info", ".cardImage"];
     const columns = selectors.flatMap((selector) =>
         Array.from(poster?.querySelectorAll(selector) || [])
             .filter((element) => window.getComputedStyle(element).display !== "none")
@@ -4781,7 +5582,7 @@ function createCanvasInkDetector(sourceCanvas, poster = document.getElementById(
 function canvasContainsExpectedPosterInk(sourceCanvas, poster = document.getElementById("poster"), expectedRanges = null) {
     if (!sourceCanvas?.width || !sourceCanvas?.height || !poster) return false;
 
-    const protectedRanges = expectedRanges ?? getProtectedTextRanges(sourceCanvas, poster);
+    const protectedRanges = expectedRanges ?? getExpectedPosterInkRanges(sourceCanvas, poster);
     if (!protectedRanges.length) {
         return true;
     }
@@ -4873,7 +5674,7 @@ function getLineBoundaryFallbackCutY(idealCutY, minCutY, protectedRanges, cleara
     return null;
 }
 
-function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, protectedRanges, hasInkAtRow, poster = document.getElementById("poster"), { allowEndCut = true, fallbackProtectedRanges = null } = {}) {
+function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, protectedRanges, hasInkAtRow, poster = document.getElementById("poster"), { allowEndCut = true, fallbackProtectedRanges = null, imageRanges = [] } = {}) {
     const remainingHeight = sourceCanvas.height - sourceY;
     if (remainingHeight <= maxContentHeight && allowEndCut) return remainingHeight;
 
@@ -4882,6 +5683,30 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
     const minCutY = sourceY + Math.max(1, Math.round(12 * scale));
     const clearance = Math.max(6, Math.round(10 * scale));
     const maxBacktrack = getCutBacktrackLimit(scale, maxContentHeight);
+    const blockingImage = imageRanges.find((range) =>
+        range.top > sourceY + clearance
+        && range.top < idealCutY
+        && range.bottom > idealCutY
+        && !range.canSplit
+    );
+
+    if (blockingImage) {
+        const imageStartCutY = Math.floor(blockingImage.top - clearance);
+        if (imageStartCutY > minCutY) {
+            return Math.max(1, imageStartCutY - sourceY);
+        }
+    }
+
+    const continuingTallImage = imageRanges.find((range) =>
+        range.canSplit
+        && sourceY >= range.top - clearance
+        && sourceY < range.bottom - clearance
+    );
+
+    if (continuingTallImage) {
+        return Math.min(maxContentHeight, remainingHeight);
+    }
+
     const safeCutY = findNearestSafeCutY(idealCutY, minCutY, protectedRanges, hasInkAtRow, clearance, maxBacktrack);
 
     if (safeCutY !== null) {
@@ -5084,6 +5909,7 @@ function getCroppedProtectedRanges(protectedRanges, cropY, cropHeight) {
     return protectedRanges
         .filter((range) => range.bottom > cropY && range.top < cropBottom)
         .map((range) => ({
+            ...range,
             top: Math.max(0, range.top - cropY),
             bottom: Math.min(cropHeight, range.bottom - cropY)
         }));
@@ -5095,6 +5921,8 @@ async function captureSlicedExportWindow({
     sourceY,
     captureHeight,
     protectedRanges,
+    expectedInkRanges,
+    imageRanges,
     fallbackProtectedRanges,
     maxWindowSlices,
     contentSliceHeight,
@@ -5109,6 +5937,16 @@ async function captureSlicedExportWindow({
             sourceY,
             requestedCaptureHeight
         );
+        const localExpectedInkRanges = getCroppedProtectedRanges(
+            expectedInkRanges,
+            sourceY,
+            requestedCaptureHeight
+        );
+        const localImageRanges = getCroppedProtectedRanges(
+            imageRanges,
+            sourceY,
+            requestedCaptureHeight
+        );
 
         try {
             const captureOptions = {
@@ -5120,7 +5958,7 @@ async function captureSlicedExportWindow({
                 transparentPosterBackground: Boolean(backgroundImageDataUrl),
                 captureY: sourceY / exportScale,
                 captureHeight: requestedCaptureHeight / exportScale,
-                expectedInkRanges: localProtectedRanges
+                expectedInkRanges: localExpectedInkRanges
             };
             const sourceCanvas = await capturePosterCanvas(captureOptions);
             const capturedHeight = Math.min(requestedCaptureHeight, sourceCanvas.height);
@@ -5132,6 +5970,7 @@ async function captureSlicedExportWindow({
                 sourceCanvas,
                 capturedHeight,
                 protectedRanges: getCroppedProtectedRanges(protectedRanges, sourceY, capturedHeight),
+                imageRanges: getCroppedProtectedRanges(imageRanges, sourceY, capturedHeight),
                 fallbackProtectedRanges: getCroppedProtectedRanges(fallbackProtectedRanges, sourceY, capturedHeight),
                 windowSlices,
                 captureEngine: "html2canvas"
@@ -5151,6 +5990,7 @@ async function captureSlicedExportWindow({
 
 async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, exportScale, jpegQuality = DESKTOP_SLICED_EXPORT_JPEG_QUALITY) {
     const exportStartedAt = performance.now();
+    await waitForPosterImagesLoaded(phonePoster);
     const posterWidth = getPhoneExportCssWidth(resolution);
     const posterHeight = Math.max(phonePoster.scrollHeight, phonePoster.offsetHeight, 1);
     const sourceCanvasMetrics = {
@@ -5158,7 +5998,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
         height: Math.max(1, Math.ceil(posterHeight * exportScale))
     };
     sourceCanvasMetrics.height = getSlicedExportContentBottom(sourceCanvasMetrics, phonePoster);
-    const protectedRanges = getProtectedTextRanges(sourceCanvasMetrics, phonePoster);
+    const protectedTextRanges = getProtectedTextRanges(sourceCanvasMetrics, phonePoster);
     let fallbackProtectedRanges = getElementCanvasRanges(
         Array.from(phonePoster.querySelectorAll(".typesetLineInner, .verticalTextLine") || [])
             .filter((element) => element.textContent.trim()),
@@ -5179,6 +6019,17 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
         : topPaddingHeight;
     const sliceHeight = resolution.height;
     const contentSliceHeight = Math.max(sliceHeight - topPaddingHeight - watermarkBandHeight, 1);
+    const imageRanges = getProtectedImageRanges(sourceCanvasMetrics, phonePoster, {
+        contentSliceHeight
+    });
+    const protectedRanges = [
+        ...protectedTextRanges,
+        ...imageRanges.filter((range) => !range.canSplit)
+    ].sort((a, b) => a.top - b.top);
+    const expectedInkRanges = [
+        ...protectedTextRanges,
+        ...imageRanges
+    ].sort((a, b) => a.top - b.top);
     const initialWindowSlices = getSlicedCaptureWindowSlices(posterWidth, exportScale, contentSliceHeight);
 
     let sourceY = 0;
@@ -5200,6 +6051,8 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
             sourceY,
             captureHeight: remainingHeight,
             protectedRanges,
+            expectedInkRanges,
+            imageRanges,
             fallbackProtectedRanges,
             maxWindowSlices,
             contentSliceHeight,
@@ -5216,6 +6069,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
             sourceCanvas,
             capturedHeight,
             protectedRanges: localProtectedRanges,
+            imageRanges: localImageRanges,
             fallbackProtectedRanges: localFallbackProtectedRanges,
             windowSlices,
             captureEngine
@@ -5249,7 +6103,8 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
                     phonePoster,
                     {
                         allowEndCut: isLastSlice,
-                        fallbackProtectedRanges: localFallbackProtectedRanges
+                        fallbackProtectedRanges: localFallbackProtectedRanges,
+                        imageRanges: localImageRanges
                     }
                 );
 
@@ -5347,20 +6202,8 @@ if (typeof editorWidth === "number") {
 
 applyEditorCollapsedState({ shouldSave: false, shouldRerender: false });
 
-if (customColorPicker) {
-    customColorPicker.value = backgroundColor;
-}
-
-if (textColorPicker) {
-    textColorPicker.value = textColor;
-}
-
-if (subtitleInput) {
-    const subtitleEl = document.getElementById("subtitle");
-    if (subtitleEl) {
-        subtitleInput.value = subtitleEl.innerText;
-    }
-}
+setCustomPickerFromColor("background", backgroundColor, { preview: false });
+setCustomPickerFromColor("text", textColor, { preview: false });
 
 document.querySelectorAll("textarea").forEach(autoResizeTextarea);
 
