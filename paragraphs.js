@@ -105,10 +105,17 @@
                         ? item.images
                         : (item.imageDataUrl ? [item] : []);
                     const normalizedImages = images
-                        .filter((image) => image && typeof image === "object" && typeof image.imageDataUrl === "string" && image.imageDataUrl)
+                        .filter((image) => {
+                            if (!image || typeof image !== "object") return false;
+
+                            const hasDataUrl = typeof image.imageDataUrl === "string" && image.imageDataUrl;
+                            const hasStoreId = typeof image.imageStoreId === "string" && image.imageStoreId;
+                            return hasDataUrl || hasStoreId;
+                        })
                         .map((image, imageIndex) => ({
                             id: typeof image.id === "string" && image.id ? image.id : `image-${imageIndex}`,
-                            imageDataUrl: image.imageDataUrl,
+                            imageStoreId: typeof image.imageStoreId === "string" ? image.imageStoreId : "",
+                            imageDataUrl: typeof image.imageDataUrl === "string" ? image.imageDataUrl : "",
                             imageName: typeof image.imageName === "string" ? image.imageName : "",
                             imageMimeType: typeof image.imageMimeType === "string" ? image.imageMimeType : "",
                             imageOriginalMimeType: typeof image.imageOriginalMimeType === "string" ? image.imageOriginalMimeType : "",
@@ -221,11 +228,24 @@
                 throw new Error("请选择图片文件。");
             }
 
-            const { image } = await loadFileAsImage(file);
+            const { image, dataUrl } = await loadFileAsImage(file);
             const naturalWidth = image.naturalWidth || image.width;
             const naturalHeight = image.naturalHeight || image.height;
             if (!naturalWidth || !naturalHeight) {
                 throw new Error("图片尺寸异常，请换一张图片。");
+            }
+
+            const originalBytes = file.size || getDataUrlByteSize(dataUrl);
+            if (originalBytes <= MAX_CARD_IMAGE_BYTES) {
+                return {
+                    dataUrl,
+                    bytes: originalBytes,
+                    width: naturalWidth,
+                    height: naturalHeight,
+                    mimeType: file.type,
+                    originalMimeType: file.type,
+                    hasTransparency: false
+                };
             }
 
             const initialScale = Math.min(1, MAX_CARD_IMAGE_EDGE / Math.max(naturalWidth, naturalHeight));
@@ -431,6 +451,7 @@
             <div class="blockSizeControlRow">
                 <label class="inlineLabel">图片</label>
             </div>
+            <div class="cardImageUploadHint">请上传6MB以下的图片</div>
             <div class="blockSpacingControls">
                 <label for="paragraphSpacingInput-${index}">
                     段间距

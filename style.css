@@ -1609,6 +1609,13 @@ button:hover{
     word-break:break-word;
 }
 
+.cardImageUploadHint{
+    margin:-4px 0 8px;
+    color:#64748b;
+    font-size:12px;
+    line-height:1.5;
+}
+
 .cardImageEditorPreviewList{
     display:grid;
     gap:10px;

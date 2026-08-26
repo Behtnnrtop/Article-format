@@ -3,7 +3,7 @@
 =========================== */
 
 const STORAGE_KEY = "article-summary-state";
-const STATE_SCHEMA_VERSION = 17;
+const STATE_SCHEMA_VERSION = 18;
 const CONTENT_EDITOR_PLACEHOLDER = "输入段落内容...";
 const CARD_TITLE_PLACEHOLDER = "输入段落标题...";
 
@@ -571,6 +571,8 @@ const {
     renderFontOptionElements
 });
 
+const imageStore = window.ArticleImageStore || null;
+
 function loadState() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
@@ -1069,6 +1071,7 @@ let posterTypesettingOverlay = null;
 let posterBackgroundSyncFrame = null;
 let pendingStateSaveTimer = null;
 let lastSavedStateJson = "";
+let stateSaveErrorShown = false;
 let typesetMeasureCanvasContext = null;
 
 function getTypesetMeasureLayer() {
@@ -2041,10 +2044,48 @@ function autoResizeTextarea(element) {
     element.style.height = `${element.scrollHeight}px`;
 }
 
+function getImageStoreId(image) {
+    if (!image || typeof image !== "object") return "";
+    if (typeof image.imageStoreId === "string" && image.imageStoreId) return image.imageStoreId;
+    return "";
+}
+
+function serializeImageForState(image) {
+    const persistedImage = { ...image };
+
+    if (getImageStoreId(persistedImage)) {
+        persistedImage.imageDataUrl = "";
+    }
+
+    return persistedImage;
+}
+
+function serializeImageCardForState(item) {
+    const images = getCardImages(item).map(serializeImageForState);
+    const primary = images[0] || {};
+
+    return {
+        ...item,
+        images,
+        imageDataUrl: primary.imageDataUrl || "",
+        imageName: primary.imageName || "",
+        imageMimeType: primary.imageMimeType || "",
+        imageOriginalMimeType: primary.imageOriginalMimeType || "",
+        imageHasTransparency: primary.imageHasTransparency === true,
+        imageBytes: primary.imageBytes || 0,
+        imageWidth: primary.imageWidth || 0,
+        imageHeight: primary.imageHeight || 0
+    };
+}
+
+function serializeDataForState(items) {
+    return items.map((item) => isImageCard(item) ? serializeImageCardForState(item) : item);
+}
+
 function buildPersistedState() {
     return {
         globalFont,
-        data,
+        data: serializeDataForState(data),
         editorWidth,
         editorCollapsed,
         backgroundColor,
@@ -2092,7 +2133,11 @@ function commitStateSave() {
         localStorage.setItem(STORAGE_KEY, json);
         lastSavedStateJson = json;
     } catch (error) {
-        // Ignore storage quota or availability issues.
+        console.warn("State save failed", error);
+        if (!stateSaveErrorShown) {
+            stateSaveErrorShown = true;
+            window.alert("本地保存失败，可能是浏览器存储空间已满。请减少图片或清理浏览器存储后重试。");
+        }
     }
 }
 
@@ -4219,6 +4264,95 @@ function createCardImageId() {
     return `image-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function canUseImageStore() {
+    return Boolean(imageStore?.isAvailable?.());
+}
+
+async function saveCardImageDataToStore(image) {
+    if (!canUseImageStore() || !image?.imageDataUrl) return image;
+
+    const imageStoreId = getImageStoreId(image) || image.id || createCardImageId();
+
+    await imageStore.putImage({
+        id: imageStoreId,
+        dataUrl: image.imageDataUrl,
+        imageName: image.imageName || "",
+        imageMimeType: image.imageMimeType || "",
+        imageOriginalMimeType: image.imageOriginalMimeType || "",
+        imageHasTransparency: image.imageHasTransparency === true,
+        imageBytes: image.imageBytes || 0,
+        imageWidth: image.imageWidth || 0,
+        imageHeight: image.imageHeight || 0
+    });
+
+    return {
+        ...image,
+        id: image.id || imageStoreId,
+        imageStoreId
+    };
+}
+
+async function deleteCardImagesFromStore(images) {
+    if (!canUseImageStore()) return;
+
+    const ids = (images || []).map(getImageStoreId).filter(Boolean);
+    if (!ids.length) return;
+
+    try {
+        await imageStore.deleteImages(ids);
+    } catch (error) {
+        console.warn("Card image cleanup failed", error);
+    }
+}
+
+async function hydrateStoredCardImages() {
+    if (!canUseImageStore()) return false;
+
+    let changed = false;
+
+    for (const item of data) {
+        if (!isImageCard(item)) continue;
+
+        const images = [];
+
+        for (const image of getCardImages(item)) {
+            let nextImage = image;
+            const imageStoreId = getImageStoreId(nextImage);
+
+            if (nextImage.imageDataUrl) {
+                if (!imageStoreId) {
+                    try {
+                        nextImage = await saveCardImageDataToStore(nextImage);
+                        changed = true;
+                    } catch (error) {
+                        console.warn("Legacy card image migration failed", error);
+                    }
+                }
+            } else if (imageStoreId) {
+                try {
+                    const storedImage = await imageStore.getImage(imageStoreId);
+                    if (storedImage?.dataUrl) {
+                        nextImage = {
+                            ...nextImage,
+                            imageDataUrl: storedImage.dataUrl
+                        };
+                        changed = true;
+                    }
+                } catch (error) {
+                    console.warn("Stored card image load failed", error);
+                }
+            }
+
+            images.push(nextImage);
+        }
+
+        item.images = images;
+        syncImageCardLegacyFields(item);
+    }
+
+    return changed;
+}
+
 function getCardImages(item) {
     if (!item || !isImageCard(item)) return [];
     if (Array.isArray(item.images)) return item.images;
@@ -4270,7 +4404,7 @@ async function changeCardImage(index, fileList) {
             const compressed = await compressCardImageFile(file);
             if (!compressed) continue;
 
-            nextImages.push({
+            const nextImage = {
                 id: createCardImageId(),
                 imageDataUrl: compressed.dataUrl,
                 imageName: file.name || "图片",
@@ -4282,7 +4416,14 @@ async function changeCardImage(index, fileList) {
                 imageHeight: compressed.height,
                 imageWidthPercent: 100,
                 imageAlign: "center"
-            });
+            };
+
+            try {
+                nextImages.push(await saveCardImageDataToStore(nextImage));
+            } catch (error) {
+                console.warn("Card image IndexedDB save failed", error);
+                nextImages.push(nextImage);
+            }
         }
 
         if (!nextImages.length) return;
@@ -4307,6 +4448,7 @@ function removeCardImage(index) {
     const ok = window.confirm("确定要清空这个段落的所有图片吗？");
     if (!ok) return;
 
+    const removedImages = getCardImages(data[index]);
     data[index] = createImageCard({
         ...data[index],
         images: [],
@@ -4319,6 +4461,7 @@ function removeCardImage(index) {
         imageWidth: 0,
         imageHeight: 0
     });
+    deleteCardImagesFromStore(removedImages);
     renderLayoutChangePreview();
 }
 
@@ -4328,12 +4471,15 @@ function removeCardImageAt(index, imageIndex) {
     const ok = window.confirm("确定要移除这张图片吗？");
     if (!ok) return;
 
-    const images = getCardImages(data[index]).filter((_, currentIndex) => currentIndex !== imageIndex);
+    const previousImages = getCardImages(data[index]);
+    const removedImages = previousImages.filter((_, currentIndex) => currentIndex === imageIndex);
+    const images = previousImages.filter((_, currentIndex) => currentIndex !== imageIndex);
     data[index] = createImageCard({
         ...data[index],
         images
     });
     syncImageCardLegacyFields(data[index]);
+    deleteCardImagesFromStore(removedImages);
     renderLayoutChangePreview();
 }
 
@@ -5369,10 +5515,38 @@ function getProtectedTextRanges(sourceCanvas, poster = document.getElementById("
         .sort((a, b) => a.top - b.top);
 }
 
+function getGeneratedLineContentRanges(sourceCanvas, poster = document.getElementById("poster"), padding = 0) {
+    const lineRanges = getElementCanvasRanges(
+        Array.from(poster?.querySelectorAll(".typesetLineInner, .verticalTextLine") || [])
+            .filter((element) => element.textContent.trim()),
+        sourceCanvas,
+        padding,
+        poster
+    );
+
+    if (lineRanges.length) return lineRanges;
+
+    return getProtectedTextRanges(sourceCanvas, poster, {
+        textPadding: padding,
+        preferGeneratedLines: false
+    });
+}
+
+function getProtectedImageElements(poster = document.getElementById("poster")) {
+    const elements = new Set();
+
+    Array.from(poster?.querySelectorAll(".cardImage") || [])
+        .filter((element) => element.complete && element.naturalWidth > 0)
+        .forEach((element) => {
+            elements.add(element.closest(".cardImageWrap") || element);
+        });
+
+    return Array.from(elements);
+}
+
 function getProtectedImageRanges(sourceCanvas, poster = document.getElementById("poster"), { padding = 0, contentSliceHeight = null } = {}) {
     const ranges = getElementCanvasRanges(
-        Array.from(poster?.querySelectorAll(".cardImage") || [])
-            .filter((element) => element.complete && element.naturalWidth > 0),
+        getProtectedImageElements(poster),
         sourceCanvas,
         padding,
         poster
@@ -5450,7 +5624,7 @@ function mergeCanvasColumns(columns) {
 function getTextScanColumns(sourceCanvas, poster = document.getElementById("poster")) {
     const scale = getCanvasScale(sourceCanvas, poster);
     const padding = Math.max(3, Math.round(6 * scale));
-    const selectors = [".posterYear", ".posterSubtitle", ".cardTitle", ".info", ".cardImage"];
+    const selectors = [".posterYear", ".posterSubtitle", ".cardTitle", ".info", ".cardImageWrap"];
     const columns = selectors.flatMap((selector) =>
         Array.from(poster?.querySelectorAll(selector) || [])
             .filter((element) => window.getComputedStyle(element).display !== "none")
@@ -5674,7 +5848,23 @@ function getLineBoundaryFallbackCutY(idealCutY, minCutY, protectedRanges, cleara
     return null;
 }
 
-function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, protectedRanges, hasInkAtRow, poster = document.getElementById("poster"), { allowEndCut = true, fallbackProtectedRanges = null, imageRanges = [] } = {}) {
+function getImageStartCutHeight(sourceY, minCutY, blockingImage, clearance) {
+    if (!blockingImage) return null;
+
+    if (blockingImage.top > sourceY) {
+        return Math.max(1, Math.floor(blockingImage.top) - sourceY);
+    }
+
+    const imageStartCutY = Math.floor(blockingImage.top - clearance);
+
+    if (imageStartCutY > minCutY) {
+        return Math.max(1, imageStartCutY - sourceY);
+    }
+
+    return null;
+}
+
+function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, protectedRanges, hasInkAtRow, poster = document.getElementById("poster"), { allowEndCut = true, fallbackProtectedRanges = null, tightFallbackProtectedRanges = null, imageRanges = [] } = {}) {
     const remainingHeight = sourceCanvas.height - sourceY;
     if (remainingHeight <= maxContentHeight && allowEndCut) return remainingHeight;
 
@@ -5691,10 +5881,8 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
     );
 
     if (blockingImage) {
-        const imageStartCutY = Math.floor(blockingImage.top - clearance);
-        if (imageStartCutY > minCutY) {
-            return Math.max(1, imageStartCutY - sourceY);
-        }
+        const imageStartCutHeight = getImageStartCutHeight(sourceY, minCutY, blockingImage, clearance);
+        if (imageStartCutHeight !== null) return imageStartCutHeight;
     }
 
     const continuingTallImage = imageRanges.find((range) =>
@@ -5719,10 +5907,36 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
         return Math.max(1, fallbackCutY - sourceY);
     }
 
+    const unsplittableImageRanges = imageRanges.filter((range) => !range.canSplit);
+    const tightFallbackCutRanges = tightFallbackProtectedRanges
+        ? [
+            ...tightFallbackProtectedRanges,
+            ...unsplittableImageRanges
+        ].sort((a, b) => a.top - b.top)
+        : null;
+    const fallbackCutRanges = [
+        ...(fallbackProtectedRanges || protectedRanges),
+        ...unsplittableImageRanges
+    ].sort((a, b) => a.top - b.top);
+    const tightTextSafeCutY = tightFallbackCutRanges
+        ? findNearestSafeCutY(
+            idealCutY,
+            minCutY,
+            tightFallbackCutRanges,
+            null,
+            0,
+            maxBacktrack
+        )
+        : null;
+
+    if (tightTextSafeCutY !== null) {
+        return Math.max(1, tightTextSafeCutY - sourceY);
+    }
+
     const textSafeCutY = findNearestSafeCutY(
         idealCutY,
         minCutY,
-        fallbackProtectedRanges || protectedRanges,
+        fallbackCutRanges,
         null,
         0,
         maxBacktrack
@@ -5731,6 +5945,19 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
     if (textSafeCutY !== null) {
         return Math.max(1, textSafeCutY - sourceY);
     }
+
+    const blockingFallbackImage = unsplittableImageRanges.find((range) =>
+        range.top > sourceY
+        && range.top < idealCutY
+        && range.bottom >= idealCutY
+    );
+    const fallbackImageStartCutHeight = getImageStartCutHeight(
+        sourceY,
+        minCutY,
+        blockingFallbackImage,
+        clearance
+    );
+    if (fallbackImageStartCutHeight !== null) return fallbackImageStartCutHeight;
 
     return maxContentHeight;
 }
@@ -5924,6 +6151,7 @@ async function captureSlicedExportWindow({
     expectedInkRanges,
     imageRanges,
     fallbackProtectedRanges,
+    tightFallbackProtectedRanges,
     maxWindowSlices,
     contentSliceHeight,
     showOverlayBeforeCapture
@@ -5972,6 +6200,7 @@ async function captureSlicedExportWindow({
                 protectedRanges: getCroppedProtectedRanges(protectedRanges, sourceY, capturedHeight),
                 imageRanges: getCroppedProtectedRanges(imageRanges, sourceY, capturedHeight),
                 fallbackProtectedRanges: getCroppedProtectedRanges(fallbackProtectedRanges, sourceY, capturedHeight),
+                tightFallbackProtectedRanges: getCroppedProtectedRanges(tightFallbackProtectedRanges, sourceY, capturedHeight),
                 windowSlices,
                 captureEngine: "html2canvas"
             };
@@ -5999,19 +6228,13 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
     };
     sourceCanvasMetrics.height = getSlicedExportContentBottom(sourceCanvasMetrics, phonePoster);
     const protectedTextRanges = getProtectedTextRanges(sourceCanvasMetrics, phonePoster);
-    let fallbackProtectedRanges = getElementCanvasRanges(
-        Array.from(phonePoster.querySelectorAll(".typesetLineInner, .verticalTextLine") || [])
-            .filter((element) => element.textContent.trim()),
+    const tightFallbackPadding = Math.max(2, Math.round(2 * exportScale));
+    const tightFallbackProtectedRanges = getGeneratedLineContentRanges(
         sourceCanvasMetrics,
-        0,
-        phonePoster
+        phonePoster,
+        tightFallbackPadding
     );
-    if (!fallbackProtectedRanges.length) {
-        fallbackProtectedRanges = getProtectedTextRanges(sourceCanvasMetrics, phonePoster, {
-            textPadding: 0,
-            preferGeneratedLines: false
-        });
-    }
+    const fallbackProtectedRanges = getGeneratedLineContentRanges(sourceCanvasMetrics, phonePoster, 0);
     const watermarkSettings = getWatermarkSettings(exportScale);
     const topPaddingHeight = getExportTopPaddingHeight(resolution, exportScale);
     const watermarkBandHeight = showBottomWatermark
@@ -6054,6 +6277,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
             expectedInkRanges,
             imageRanges,
             fallbackProtectedRanges,
+            tightFallbackProtectedRanges,
             maxWindowSlices,
             contentSliceHeight,
             showOverlayBeforeCapture: didShowOverlayBeforeCapture
@@ -6071,6 +6295,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
             protectedRanges: localProtectedRanges,
             imageRanges: localImageRanges,
             fallbackProtectedRanges: localFallbackProtectedRanges,
+            tightFallbackProtectedRanges: localTightFallbackProtectedRanges,
             windowSlices,
             captureEngine
         } = captureResult;
@@ -6104,6 +6329,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
                     {
                         allowEndCut: isLastSlice,
                         fallbackProtectedRanges: localFallbackProtectedRanges,
+                        tightFallbackProtectedRanges: localTightFallbackProtectedRanges,
                         imageRanges: localImageRanges
                     }
                 );
@@ -6192,52 +6418,61 @@ async function exportSlicedImagesZip() {
    Init
 =========================== */
 
-loadState();
-setMobileEditorPanel(activeMobileEditorPanel);
-updateMobileTypesetRefreshButton();
+async function initializeApp() {
+    loadState();
+    const didHydrateStoredImages = await hydrateStoredCardImages();
 
-if (typeof editorWidth === "number") {
-    editor.style.width = editorWidth + "px";
-}
+    setMobileEditorPanel(activeMobileEditorPanel);
+    updateMobileTypesetRefreshButton();
 
-applyEditorCollapsedState({ shouldSave: false, shouldRerender: false });
-
-setCustomPickerFromColor("background", backgroundColor, { preview: false });
-setCustomPickerFromColor("text", textColor, { preview: false });
-
-document.querySelectorAll("textarea").forEach(autoResizeTextarea);
-
-if (paragraphTitleSpacingInput) {
-    paragraphTitleSpacingInput.value = String(paragraphTitleSpacing);
-}
-
-if (sideSpacingInput) {
-    sideSpacingInput.value = String(sideSpacing);
-}
-
-if (moduleSpacingInput) {
-    moduleSpacingInput.value = String(moduleSpacing);
-}
-
-if (topPaddingInput) {
-    topPaddingInput.value = String(topPadding);
-}
-
-if (sideHeaderReserveInput) {
-    sideHeaderReserveInput.value = String(sideHeaderReserve);
-}
-
-scheduleTypesettingOverlay("正在排版...");
-renderAuxiliaryControls();
-render({
-    deferEditor: true,
-    previewOptions: {
-        updateControls: false,
-        shouldSave: false,
-        hideOverlayWhenReady: true
+    if (typeof editorWidth === "number") {
+        editor.style.width = editorWidth + "px";
     }
-});
 
-requestAnimationFrame(() => {
-    isInitializing = false;
-});
+    applyEditorCollapsedState({ shouldSave: false, shouldRerender: false });
+
+    setCustomPickerFromColor("background", backgroundColor, { preview: false });
+    setCustomPickerFromColor("text", textColor, { preview: false });
+
+    document.querySelectorAll("textarea").forEach(autoResizeTextarea);
+
+    if (paragraphTitleSpacingInput) {
+        paragraphTitleSpacingInput.value = String(paragraphTitleSpacing);
+    }
+
+    if (sideSpacingInput) {
+        sideSpacingInput.value = String(sideSpacing);
+    }
+
+    if (moduleSpacingInput) {
+        moduleSpacingInput.value = String(moduleSpacing);
+    }
+
+    if (topPaddingInput) {
+        topPaddingInput.value = String(topPadding);
+    }
+
+    if (sideHeaderReserveInput) {
+        sideHeaderReserveInput.value = String(sideHeaderReserve);
+    }
+
+    scheduleTypesettingOverlay("正在排版...");
+    renderAuxiliaryControls();
+    render({
+        deferEditor: true,
+        previewOptions: {
+            updateControls: false,
+            shouldSave: false,
+            hideOverlayWhenReady: true
+        }
+    });
+
+    requestAnimationFrame(() => {
+        isInitializing = false;
+        if (didHydrateStoredImages) {
+            saveState({ immediate: true });
+        }
+    });
+}
+
+initializeApp();
