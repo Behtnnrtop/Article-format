@@ -4495,6 +4495,18 @@ function changeCardImageWidth(index, imageIndex, value) {
     scheduleCardPreviewRender(index);
 }
 
+function syncCardImageAlignControl(index, imageIndex, selectedValue) {
+    const control = document.querySelector(`[data-card-image-align-control="${index}:${imageIndex}"]`);
+    if (!control) return;
+
+    const selectedAlign = normalizeTextAlign(selectedValue || "center");
+    control.querySelectorAll("[data-card-image-align-value]").forEach((button) => {
+        const active = button.dataset.cardImageAlignValue === selectedAlign;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+}
+
 function changeCardImageAlign(index, imageIndex, value) {
     const nextValue = normalizeTextAlign(value || "center");
 
@@ -4503,6 +4515,7 @@ function changeCardImageAlign(index, imageIndex, value) {
         imageAlign: nextValue
     }))) return;
 
+    syncCardImageAlignControl(index, imageIndex, nextValue);
     scheduleCardPreviewRender(index);
 }
 

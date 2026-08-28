@@ -410,7 +410,7 @@
             return ["left", "center", "right"]
                 .map((value) => {
                     const label = value === "left" ? "左" : (value === "right" ? "右" : "中");
-                    return `<button type="button" class="${value === selectedAlign ? "active" : ""}" onclick="changeCardImageAlign(${cardIndex},${imageIndex},'${value}')">${label}</button>`;
+                    return `<button type="button" class="${value === selectedAlign ? "active" : ""}" data-card-image-align-value="${value}" aria-pressed="${value === selectedAlign ? "true" : "false"}" onclick="changeCardImageAlign(${cardIndex},${imageIndex},'${value}')">${label}</button>`;
                 })
                 .join("");
         }
@@ -438,7 +438,7 @@
                                         ${renderImageWidthOptions([50, 75, 100].includes(image.imageWidthPercent) ? image.imageWidthPercent : 100)}
                                     </select>
                                 </label>
-                                <div class="cardImageAlignControl" aria-label="图片对齐方式">
+                                <div class="cardImageAlignControl" data-card-image-align-control="${index}:${imageIndex}" aria-label="图片对齐方式">
                                     ${renderImageAlignButtons(index, imageIndex, image.imageAlign)}
                                 </div>
                             </div>
