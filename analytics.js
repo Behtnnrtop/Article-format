@@ -1,7 +1,7 @@
 (function () {
     "use strict";
 
-    const ANALYTICS_WORKER_BASE_URL = "";
+    const ANALYTICS_WORKER_BASE_URL = "https://article-format-api.article-format-api.workers.dev";
     const VISITOR_ID_STORAGE_KEY = "article-format-visitor-id";
     const DAILY_ACTIVE_STORAGE_KEY = "article-format-daily-active-day";
     const REPORT_DELAY_MS = 2000;
