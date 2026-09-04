@@ -415,6 +415,19 @@
                 .join("");
         }
 
+        function renderImageOrderButtons(cardIndex, imageIndex, imageCount) {
+            return `
+                                <div class="cardImageOrderControl" aria-label="移动图片顺序">
+                                    <button type="button" title="上移图片顺序" aria-label="上移图片顺序" onclick="moveCardImageByStep(${cardIndex},${imageIndex},-1)"${imageIndex === 0 ? " disabled" : ""}>↑<span>上移</span></button>
+                                    <button type="button" title="下移图片顺序" aria-label="下移图片顺序" onclick="moveCardImageByStep(${cardIndex},${imageIndex},1)"${imageIndex === imageCount - 1 ? " disabled" : ""}>↓<span>下移</span></button>
+                                </div>`;
+        }
+
+        function renderImageSortHandle(cardIndex, imageIndex, imageCount) {
+            const disabled = imageCount < 2 ? " disabled" : "";
+            return `<button type="button" class="cardImageSortHandle" title="拖拽调整图片顺序" aria-label="拖拽调整图片顺序" onpointerdown="startCardImageSortDrag(event,${cardIndex},${imageIndex})" onclick="event.preventDefault()"${disabled}><span aria-hidden="true"></span></button>`;
+        }
+
         function renderImageCardEditorBody(item, index) {
             const itemParagraphSpacing = getItemParagraphSpacing(item);
             const images = Array.isArray(item.images) ? item.images : (item.imageDataUrl ? [item] : []);
@@ -424,9 +437,10 @@
                 : "未上传图片";
             const imagePreviewHtml = images.length
                 ? `<div class="cardImageEditorPreviewList">${images.map((image, imageIndex) => `
-                    <div class="cardImageEditorPreviewItem">
+                    <div class="cardImageEditorPreviewItem${recentlyMovedCardImage?.cardIndex === index && recentlyMovedCardImage?.imageIndex === imageIndex ? " recentlyMovedCardImage" : ""}" data-card-image-editor-index="${index}:${imageIndex}">
                         <div class="cardImageEditorPreviewName">${imageIndex + 1}. ${escapeHtml(image.imageName || "图片")}，${formatBytes(image.imageBytes)}，${image.imageWidth || 0}×${image.imageHeight || 0}</div>
                         <div class="cardImageEditorPreviewBody">
+                            ${renderImageSortHandle(index, imageIndex, images.length)}
                             <div class="cardImageEditorPreviewFrame">
                                 <img class="cardImageEditorPreview" src="${escapeHtml(image.imageDataUrl)}" alt="">
                             </div>
@@ -441,6 +455,7 @@
                                 <div class="cardImageAlignControl" data-card-image-align-control="${index}:${imageIndex}" aria-label="图片对齐方式">
                                     ${renderImageAlignButtons(index, imageIndex, image.imageAlign)}
                                 </div>
+                                ${renderImageOrderButtons(index, imageIndex, images.length)}
                             </div>
                         </div>
                     </div>
@@ -457,7 +472,7 @@
                     段间距
                     <input type="number" id="paragraphSpacingInput-${index}" min="0" max="80" step="2" value="${itemParagraphSpacing}" oninput="changeParagraphSpacing(${index},this.value)">
                 </label>
-                <div class="cardImageEditorActions">
+                <div class="cardImageEditorActions cardImageSpacingActions">
                     <button type="button" onclick="openCardImagePicker(${index})">${images.length ? "继续添加" : "上传图片"}</button>
                     <button type="button" class="deleteBtn" onclick="removeCardImage(${index})"${images.length ? "" : " disabled"}>清空图片</button>
                 </div>

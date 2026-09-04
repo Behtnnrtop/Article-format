@@ -4,10 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1.0">
     <title>长文排版</title>
-    <link rel="stylesheet" href="style.css?v=35">
+    <link rel="stylesheet" href="style.css?v=81">
 </head>
 <body>
     <div id="customColorModalBackdrop" class="customColorModalBackdrop" hidden></div>
+    <div id="copyStyleModal" class="copyStyleModal" hidden role="dialog" aria-modal="true" aria-labelledby="copyStyleModalTitle">
+        <div class="copyStyleDialog">
+            <div class="copyStyleHeader">
+                <div>
+                    <h3 id="copyStyleModalTitle">复制样式到</h3>
+                    <p id="copyStyleSourceLabel"></p>
+                </div>
+                <button type="button" class="copyStyleCloseBtn" aria-label="关闭" onclick="closeCopyStyleModal()">×</button>
+            </div>
+            <div id="copyStyleArticleList" class="copyStyleArticleList"></div>
+            <div class="copyStyleActions">
+                <button type="button" class="copyStyleCancelBtn" onclick="closeCopyStyleModal()">取消</button>
+                <button type="button" class="copyStyleApplyBtn" onclick="confirmCopyStyleToArticles()">复制样式</button>
+            </div>
+        </div>
+    </div>
     <div id="preview">
         <div id="posterTypesettingOverlay" class="posterTypesettingOverlay visible" aria-hidden="false">
             <div class="posterTypesettingMessage">正在排版...</div>
@@ -41,19 +57,25 @@
     <div id="editor">
         <div class="mobileExportWarning">如果字符数大于7000，请不要在手机端导出图片</div>
 
+        <div class="articleManager" data-mobile-panel="article" aria-label="文章管理">
+            <label for="articleSelect">文章管理</label>
+            <select id="articleSelect" onchange="switchArticle(this.value)"></select>
+            <button type="button" onclick="createArticle()">新建</button>
+            <button type="button" onclick="renameArticle()">重命名</button>
+            <button type="button" onclick="openCopyStyleModal()">复制样式到</button>
+            <button id="deleteArticleBtn" class="danger" type="button" onclick="deleteArticle()">删除</button>
+        </div>
+
         <div class="editorHeader">
             <h2>编辑器</h2>
             <div class="editorHeaderActions" data-mobile-panel="text">
                 <button id="bottomWatermarkToggleBtn" type="button" onclick="toggleBottomWatermark()">隐藏底部水印</button>
-                <button id="timelineToggleBtn" type="button" onclick="toggleTimeline()">隐藏时间轴</button>
-                <button id="monthTitleToggleBtn" type="button" onclick="toggleMonthTitles()">隐藏段落标题</button>
-                <button id="underlineToggleBtn" type="button" onclick="toggleMonthUnderlines()">隐藏段落标题横线</button>
-                <button id="sideHeaderToggleBtn" type="button" onclick="toggleSideHeader()">隐藏竖排标题</button>
                 <button id="phonePreviewToggleBtn" type="button" onclick="togglePhonePreview()">显示手机预览</button>
             </div>
         </div>
 
         <div class="mobileEditorTabs" role="tablist" aria-label="手机属性分组">
+            <button type="button" class="mobileEditorTab" data-mobile-tab="article" role="tab" aria-selected="false" onclick="setMobileEditorPanel('article')">文章</button>
             <button type="button" class="mobileEditorTab active" data-mobile-tab="style" role="tab" aria-selected="true" onclick="setMobileEditorPanel('style')">总样式</button>
             <button type="button" class="mobileEditorTab" data-mobile-tab="text" role="tab" aria-selected="false" onclick="setMobileEditorPanel('text')">标题</button>
             <button type="button" class="mobileEditorTab" data-mobile-tab="blocks" role="tab" aria-selected="false" onclick="setMobileEditorPanel('blocks')">段落</button>
@@ -79,27 +101,58 @@
         <button id="exportSlicesBtn" class="mobileExportBtn" data-mobile-panel="export" onclick="exportSlicedImagesZip()">导出已切图</button>
 
         <div class="editItem" data-mobile-panel="style">
-            <label>背景颜色</label>
-            <div id="bgPalette" class="bgPalette"></div>
-            <div id="backgroundCustomColorPanel" class="customColorPanel" hidden>
-                <div class="customColorField" id="backgroundColorField">
-                    <span class="customColorFieldCursor" id="backgroundColorFieldCursor"></span>
+            <div class="colorControlGroup">
+                <label>字体颜色</label>
+                <div id="textColorPalette" class="bgPalette"></div>
+                <div class="inlineFontLoader">
+                    <button id="loadFontsBtn" type="button">读取本机字体</button>
+                    <div id="fontStatus" class="fontStatus"></div>
                 </div>
-                <input type="range" id="backgroundHueRange" class="customHueRange" min="0" max="360" value="0" aria-label="背景颜色色相">
-                <div class="customColorInputs">
-                    <span class="customColorPreviewChip" id="backgroundColorPreviewChip"></span>
-                    <input type="text" id="backgroundHexInput" class="customHexInput" value="#efefef" aria-label="背景颜色 HEX">
-                </div>
-                <div class="customRgbInputs">
-                    <label>R <input type="number" id="backgroundRedInput" min="0" max="255" value="239"></label>
-                    <label>G <input type="number" id="backgroundGreenInput" min="0" max="255" value="239"></label>
-                    <label>B <input type="number" id="backgroundBlueInput" min="0" max="255" value="239"></label>
-                </div>
-                <div class="customColorActions">
-                    <button type="button" class="customColorCancel" onclick="cancelBackgroundCustomColor()">取消</button>
-                    <button type="button" class="customColorApply" onclick="confirmBackgroundCustomColor()">确认颜色</button>
+                <div id="textCustomColorPanel" class="customColorPanel" hidden>
+                    <div class="customColorField" id="textColorField">
+                        <span class="customColorFieldCursor" id="textColorFieldCursor"></span>
+                    </div>
+                    <input type="range" id="textHueRange" class="customHueRange" min="0" max="360" value="0" aria-label="字体颜色色相">
+                    <div class="customColorInputs">
+                        <span class="customColorPreviewChip" id="textColorPreviewChip"></span>
+                        <input type="text" id="textHexInput" class="customHexInput" value="#111111" aria-label="字体颜色 HEX">
+                    </div>
+                    <div class="customRgbInputs">
+                        <label>R <input type="number" id="textRedInput" min="0" max="255" value="17"></label>
+                        <label>G <input type="number" id="textGreenInput" min="0" max="255" value="17"></label>
+                        <label>B <input type="number" id="textBlueInput" min="0" max="255" value="17"></label>
+                    </div>
+                    <div class="customColorActions">
+                        <button type="button" class="customColorCancel" onclick="cancelTextCustomColor()">取消</button>
+                        <button type="button" class="customColorApply" onclick="confirmTextCustomColor()">确认颜色</button>
+                    </div>
                 </div>
             </div>
+
+            <div class="colorControlGroup">
+                <label>背景颜色</label>
+                <div id="bgPalette" class="bgPalette"></div>
+                <div id="backgroundCustomColorPanel" class="customColorPanel" hidden>
+                    <div class="customColorField" id="backgroundColorField">
+                        <span class="customColorFieldCursor" id="backgroundColorFieldCursor"></span>
+                    </div>
+                    <input type="range" id="backgroundHueRange" class="customHueRange" min="0" max="360" value="0" aria-label="背景颜色色相">
+                    <div class="customColorInputs">
+                        <span class="customColorPreviewChip" id="backgroundColorPreviewChip"></span>
+                        <input type="text" id="backgroundHexInput" class="customHexInput" value="#efefef" aria-label="背景颜色 HEX">
+                    </div>
+                    <div class="customRgbInputs">
+                        <label>R <input type="number" id="backgroundRedInput" min="0" max="255" value="239"></label>
+                        <label>G <input type="number" id="backgroundGreenInput" min="0" max="255" value="239"></label>
+                        <label>B <input type="number" id="backgroundBlueInput" min="0" max="255" value="239"></label>
+                    </div>
+                    <div class="customColorActions">
+                        <button type="button" class="customColorCancel" onclick="cancelBackgroundCustomColor()">取消</button>
+                        <button type="button" class="customColorApply" onclick="confirmBackgroundCustomColor()">确认颜色</button>
+                    </div>
+                </div>
+            </div>
+
             <div class="backgroundImagePanel">
                 <label for="backgroundImageInput">背景图片</label>
                 <input type="file" id="backgroundImageInput" accept="image/*" class="hiddenFileInput">
@@ -109,30 +162,6 @@
                 </div>
                 <div id="backgroundImageStatus" class="backgroundImageStatus">未上传背景图片</div>
                 <div id="backgroundImagePreview" class="backgroundImagePreview" hidden></div>
-            </div>
-        </div>
-
-        <div class="editItem" data-mobile-panel="style">
-            <label>字体颜色</label>
-            <div id="textColorPalette" class="bgPalette"></div>
-            <div id="textCustomColorPanel" class="customColorPanel" hidden>
-                <div class="customColorField" id="textColorField">
-                    <span class="customColorFieldCursor" id="textColorFieldCursor"></span>
-                </div>
-                <input type="range" id="textHueRange" class="customHueRange" min="0" max="360" value="0" aria-label="字体颜色色相">
-                <div class="customColorInputs">
-                    <span class="customColorPreviewChip" id="textColorPreviewChip"></span>
-                    <input type="text" id="textHexInput" class="customHexInput" value="#111111" aria-label="字体颜色 HEX">
-                </div>
-                <div class="customRgbInputs">
-                    <label>R <input type="number" id="textRedInput" min="0" max="255" value="17"></label>
-                    <label>G <input type="number" id="textGreenInput" min="0" max="255" value="17"></label>
-                    <label>B <input type="number" id="textBlueInput" min="0" max="255" value="17"></label>
-                </div>
-                <div class="customColorActions">
-                    <button type="button" class="customColorCancel" onclick="cancelTextCustomColor()">取消</button>
-                    <button type="button" class="customColorApply" onclick="confirmTextCustomColor()">确认颜色</button>
-                </div>
             </div>
         </div>
 
@@ -161,11 +190,6 @@
             </div>
         </div>
 
-        <div class="editItem fontLoaderPanel" data-mobile-panel="style">
-            <button id="loadFontsBtn" type="button">读取本机字体</button>
-            <div id="fontStatus" class="fontStatus"></div>
-        </div>
-
         <div class="editItem" data-mobile-panel="text">
             <label>
                 顶部标题
@@ -174,21 +198,25 @@
                 <button id="yearShadowToggleBtn" type="button" onclick="toggleYearShadow()">隐藏标题阴影</button>
                 <span id="yearSizeValue" class="sizeValue"></span>
             </label>
-            <select id="yearFontSelect" class="fontSelect blockFontSelect" onchange="changeYearFont(this.value,this)"></select>
-            <div id="yearAlignControls"></div>
+            <div class="headlineFontRow">
+                <select id="yearFontSelect" class="fontSelect blockFontSelect" onchange="changeYearFont(this.value,this)"></select>
+                <div id="yearAlignControls" class="headlineAlignControls"></div>
+            </div>
             <textarea id="yearInput" rows="2" placeholder="输入标题..."></textarea>
         </div>
 
         <div class="editItem" data-mobile-panel="text">
             <label>
-                作者
+                副标题
                 <button onclick="changeSubtitleSize(-1)">A-</button>
                 <button onclick="changeSubtitleSize(1)">A+</button>
                 <button id="subtitlePositionToggleBtn" type="button" onclick="toggleSubtitlePosition()">竖排左侧</button>
                 <span id="subtitleSizeValue" class="sizeValue"></span>
             </label>
-            <select id="subtitleFontSelect" class="fontSelect blockFontSelect" onchange="changeSubtitleFont(this.value,this)"></select>
-            <div id="subtitleAlignControls"></div>
+            <div class="headlineFontRow">
+                <select id="subtitleFontSelect" class="fontSelect blockFontSelect" onchange="changeSubtitleFont(this.value,this)"></select>
+                <div id="subtitleAlignControls" class="headlineAlignControls"></div>
+            </div>
             <textarea id="subtitleInput" rows="2" placeholder="输入副标题..."></textarea>
         </div>
 
@@ -197,6 +225,7 @@
                 右侧竖排标题
                 <button onclick="changeSideSize(-2)">A-</button>
                 <button onclick="changeSideSize(2)">A+</button>
+                <button id="sideHeaderToggleBtn" type="button" onclick="toggleSideHeader()">隐藏竖排标题</button>
                 <span id="sideSizeValue" class="sizeValue"></span>
             </label>
             <select id="sideFontSelect" class="fontSelect blockFontSelect" onchange="changeSideFont(this.value,this)"></select>
@@ -206,6 +235,16 @@
         <div class="addBlockActions" data-mobile-panel="blocks">
             <button id="addBtn" type="button" onclick="addTextCard()">＋ 文字段落</button>
             <button id="addImageBtn" type="button" onclick="addImageCard()">＋ 图片段落</button>
+        </div>
+
+        <div class="cardSortAction" data-mobile-panel="blocks">
+            <button id="cardSortModeBtn" type="button" onclick="toggleCardSortMode()">调整段落顺序</button>
+        </div>
+
+        <div class="paragraphDisplayActions" data-mobile-panel="blocks">
+            <button id="timelineToggleBtn" type="button" onclick="toggleTimeline()">隐藏时间轴</button>
+            <button id="monthTitleToggleBtn" type="button" onclick="toggleMonthTitles()">隐藏段落标题</button>
+            <button id="underlineToggleBtn" type="button" onclick="toggleMonthUnderlines()">隐藏段落标题横线</button>
         </div>
 
         <div id="cardEditor" data-mobile-panel="blocks"></div>
@@ -241,9 +280,12 @@
 
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script src="paragraphs.js?v=20260827-2"></script>
+    <script src="paragraphs.js?v=20260901-3"></script>
     <script src="image-store.js?v=20260826-1"></script>
-    <script src="script.js?v=20260826-5"></script>
+    <script src="layout.js?v=20260904-1"></script>
+    <script src="export.js?v=20260904-3"></script>
+    <script src="script.js?v=20260904-1"></script>
+    <script src="analytics.js?v=20260903-1"></script>
 
 </body>
 </html>
