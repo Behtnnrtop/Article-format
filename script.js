@@ -89,8 +89,8 @@ function getViewportSize() {
     const viewport = window.visualViewport;
 
     return {
-        width: viewport?.width || window.innerWidth,
-        height: viewport?.height || window.innerHeight
+        width: (viewport && viewport.width) || window.innerWidth,
+        height: (viewport && viewport.height) || window.innerHeight
     };
 }
 
@@ -98,10 +98,20 @@ function isMobileViewport() {
     return window.matchMedia("(max-width: 768px), (pointer: coarse) and (max-width: 1024px)").matches;
 }
 
+function syncEditorWidthVariable() {
+    const editor = document.getElementById("editor");
+    const width = editor ? editor.getBoundingClientRect().width : 0;
+
+    if (!width) return;
+
+    document.documentElement.style.setProperty("--editor-width", `${Math.round(width)}px`);
+}
+
 function applyResponsiveViewport() {
     const { width, height } = getViewportSize();
     const root = document.documentElement;
 
+    syncEditorWidthVariable();
     root.style.setProperty("--app-viewport-height", `${height}px`);
 
     if (!isMobileViewport()) {
@@ -110,7 +120,7 @@ function applyResponsiveViewport() {
         return;
     }
 
-    const mobilePreviewHeight = Math.min(Math.max(height * 0.34, 220), 320);
+    const mobilePreviewHeight = Math.max(1, Math.round(height * 0.5));
     root.style.setProperty("--mobile-poster-width", `${Math.round(width)}px`);
     root.style.setProperty("--mobile-preview-height", `${Math.round(mobilePreviewHeight)}px`);
 }
@@ -138,7 +148,7 @@ function getPreviewFontScale() {
 }
 
 function getPhoneExportCssWidth(resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"]) {
-    const cssWidth = Number(resolution?.cssWidth);
+    const cssWidth = Number(resolution && resolution.cssWidth);
     return Math.max(1, Math.round(Number.isFinite(cssWidth) ? cssWidth : 360));
 }
 
@@ -151,8 +161,8 @@ function getLongImageExportScale(
     resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"],
     preferredScale = LONG_IMAGE_EXPORT_SCALE
 ) {
-    const posterWidth = poster?.offsetWidth || getPhoneExportCssWidth(resolution);
-    const posterHeight = poster?.scrollHeight || poster?.offsetHeight || resolution.height;
+    const posterWidth = (poster && poster.offsetWidth) || getPhoneExportCssWidth(resolution);
+    const posterHeight = (poster && (poster.scrollHeight || poster.offsetHeight)) || resolution.height;
     const outputPixels = posterWidth
         * (posterHeight + topPadding)
         * preferredScale
@@ -183,7 +193,7 @@ function getResolutionDesignScale() {
 }
 
 function getSubtitleSettings(previewFontScale = getPreviewFontScale(), element = null) {
-    const isPhoneRender = Boolean(element?.closest(".phoneRenderPoster"));
+    const isPhoneRender = Boolean(element && element.closest(".phoneRenderPoster"));
     const responsiveSettings = isPhoneRender || isMobileViewport()
         ? SUBTITLE_SETTINGS.mobile
         : SUBTITLE_SETTINGS.desktop;
@@ -241,6 +251,7 @@ const currentWordCountElements = document.querySelectorAll("[data-current-word-c
 const subtitleInput = document.getElementById("subtitleInput");
 const articleSelect = document.getElementById("articleSelect");
 const deleteArticleBtn = document.getElementById("deleteArticleBtn");
+const articleManagerBackdrop = document.getElementById("articleManagerBackdrop");
 const copyStyleModal = document.getElementById("copyStyleModal");
 const copyStyleSourceLabel = document.getElementById("copyStyleSourceLabel");
 const copyStyleArticleList = document.getElementById("copyStyleArticleList");
@@ -633,7 +644,10 @@ function getArticleStorageKey(articleId) {
 }
 
 function getFallbackArticleTitle(state = null) {
-    const yearTitle = String(state?.yearTitle ?? document.getElementById("yearInput")?.value ?? "").trim();
+    const yearInput = document.getElementById("yearInput");
+    const stateYearTitle = state ? state.yearTitle : null;
+    const inputYearTitle = yearInput ? yearInput.value : "";
+    const yearTitle = String(stateYearTitle != null ? stateYearTitle : inputYearTitle).trim();
     return yearTitle || "未命名文章";
 }
 
@@ -655,7 +669,7 @@ function loadArticleIndexFromStorage() {
         if (!raw) return { schemaVersion: ARTICLE_INDEX_SCHEMA_VERSION, articles: [] };
 
         const parsed = JSON.parse(raw);
-        const articles = Array.isArray(parsed?.articles)
+        const articles = Array.isArray(parsed && parsed.articles)
             ? parsed.articles.map(normalizeArticleMeta).filter(Boolean)
             : [];
 
@@ -887,7 +901,7 @@ function loadState() {
 
         if (typeof state.sideSpacing === "number") {
             sideSpacing = state.sideSpacing;
-        } else if (Array.isArray(state.data) && typeof state.data[0]?.sideSpacing === "number") {
+        } else if (Array.isArray(state.data) && state.data[0] && typeof state.data[0].sideSpacing === "number") {
             sideSpacing = state.data[0].sideSpacing;
         }
 
@@ -980,7 +994,7 @@ function loadState() {
 }
 
 function escapeHtml(value) {
-    return String(value ?? "")
+    return String(value == null ? "" : value)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
@@ -994,7 +1008,7 @@ function plainTextToRichText(value) {
 
 function sanitizeRichText(value) {
     const template = document.createElement("template");
-    template.innerHTML = String(value ?? "");
+    template.innerHTML = String(value == null ? "" : value);
 
     const allowedTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "BR", "DIV", "P", "SPAN"]);
 
@@ -1047,7 +1061,7 @@ function sanitizeRichText(value) {
 
 function extractPlainTextFromRichText(value) {
     const template = document.createElement("template");
-    template.innerHTML = String(value ?? "");
+    template.innerHTML = String(value == null ? "" : value);
     const blockTags = new Set(["DIV", "P"]);
 
     function readNode(node) {
@@ -1067,18 +1081,18 @@ function extractPlainTextFromRichText(value) {
 }
 
 function countTextUnits(value) {
-    const text = String(value ?? "");
+    const text = String(value == null ? "" : value);
     const tokens = text.match(/[A-Za-z0-9]+|[\s\S]/g);
     return tokens ? tokens.length : 0;
 }
 
 function getCurrentParagraphWordCount() {
     return data.reduce((total, item, index) => {
-        if (item?.hidden || isImageCard(item)) return total;
+        if ((item && item.hidden) || isImageCard(item)) return total;
 
         const pendingText = pendingMobileTextInputs.has(index)
             ? pendingMobileTextInputs.get(index)
-            : item?.text;
+            : (item ? item.text : undefined);
 
         return total + countTextUnits(extractPlainTextFromRichText(pendingText));
     }, 0);
@@ -1229,8 +1243,8 @@ async function syncPhoneBackgroundCanvas(screen, resolution = null) {
         return;
     }
 
-    const width = Math.max(1, Math.round(resolution?.width || screen.clientWidth || screen.getBoundingClientRect().width || 0));
-    const height = Math.max(1, Math.round(resolution?.height || screen.clientHeight || screen.getBoundingClientRect().height || 0));
+    const width = Math.max(1, Math.round((resolution && resolution.width) || screen.clientWidth || screen.getBoundingClientRect().width || 0));
+    const height = Math.max(1, Math.round((resolution && resolution.height) || screen.clientHeight || screen.getBoundingClientRect().height || 0));
 
     canvas.hidden = false;
     canvas.width = width;
@@ -1332,9 +1346,9 @@ function buildPersistedState() {
         phoneResolution,
         phonePreviewScale,
         subtitlePosition,
-        yearTitle: document.getElementById("yearInput")?.value ?? "",
-        sideHeader: document.getElementById("sideInput")?.value ?? "",
-        subtitle: document.getElementById("subtitleInput")?.value ?? "",
+        yearTitle: document.getElementById("yearInput") ? document.getElementById("yearInput").value : "",
+        sideHeader: document.getElementById("sideInput") ? document.getElementById("sideInput").value : "",
+        subtitle: document.getElementById("subtitleInput") ? document.getElementById("subtitleInput").value : "",
         schemaVersion: STATE_SCHEMA_VERSION
     };
 }
@@ -1375,7 +1389,7 @@ function copyArticleStyleState(sourceState, targetState) {
         }
     });
 
-    if (Array.isArray(targetState?.data) && Array.isArray(sourceState.data)) {
+    if (Array.isArray(targetState && targetState.data) && Array.isArray(sourceState.data)) {
         nextState.data = targetState.data.map((targetItem, index) => {
             const sourceItem = sourceState.data[index];
             if (!targetItem || typeof targetItem !== "object" || !sourceItem || typeof sourceItem !== "object") {
@@ -1407,7 +1421,7 @@ function renderCopyStyleArticleList() {
     const targetArticles = articleIndex.articles.filter((article) => article.id !== currentArticleId);
 
     if (copyStyleSourceLabel) {
-        copyStyleSourceLabel.textContent = `来源：${sourceArticle?.title || getFallbackArticleTitle(sourceState)}`;
+        copyStyleSourceLabel.textContent = `来源：${(sourceArticle && sourceArticle.title) || getFallbackArticleTitle(sourceState)}`;
     }
 
     if (!targetArticles.length) {
@@ -1444,6 +1458,21 @@ function closeCopyStyleModal() {
     if (!copyStyleModal) return;
 
     copyStyleModal.hidden = true;
+}
+
+function openArticleManagerModal() {
+    syncEditorWidthVariable();
+    document.body.classList.add("articleManagerOpen");
+    if (articleManagerBackdrop) {
+        articleManagerBackdrop.hidden = false;
+    }
+}
+
+function closeArticleManagerModal() {
+    document.body.classList.remove("articleManagerOpen");
+    if (articleManagerBackdrop) {
+        articleManagerBackdrop.hidden = true;
+    }
 }
 
 function confirmCopyStyleToArticles() {
@@ -1682,7 +1711,7 @@ async function duplicateArticle() {
     const sourceMeta = getCurrentArticleMeta();
     const articleId = createArticleId();
     const now = Date.now();
-    const title = `${sourceMeta?.title || getFallbackArticleTitle(sourceState)} 副本`;
+    const title = `${(sourceMeta && sourceMeta.title) || getFallbackArticleTitle(sourceState)} 副本`;
 
     articleIndex.articles.unshift({
         id: articleId,
@@ -1739,7 +1768,7 @@ async function deleteArticle() {
 
     localStorage.removeItem(getArticleStorageKey(article.id));
     articleIndex.articles = articleIndex.articles.filter((item) => item.id !== article.id);
-    currentArticleId = articleIndex.articles[0]?.id || "";
+    currentArticleId = (articleIndex.articles[0] && articleIndex.articles[0].id) || "";
     saveArticleIndexToStorage();
     saveCurrentArticleIdToStorage();
     lastSavedStateJson = "";
@@ -1757,21 +1786,21 @@ function quoteCssFontFamily(value) {
 }
 
 function normalizeFontFamilyName(value) {
-    return String(value ?? "")
+    return String(value == null ? "" : value)
         .replace(/^["']|["']$/g, "")
         .trim()
         .toLowerCase();
 }
 
 function normalizeFontFamilyForCompare(value) {
-    return String(value ?? "")
+    return String(value == null ? "" : value)
         .replace(/["']/g, "")
         .replace(/\s+/g, "")
         .toLowerCase();
 }
 
 function getPrimaryFontFamily(value) {
-    return String(value ?? "")
+    return String(value == null ? "" : value)
         .split(",")[0]
         .replace(/^["']|["']$/g, "")
         .trim();
@@ -1813,7 +1842,7 @@ function getFontDisplayLabel(family, fullNames = []) {
 }
 
 function resolveCardTitleFontFamily(item) {
-    return item?.titleFontFamily || CARD_TITLE_DEFAULT_FONT_FAMILY;
+    return (item && item.titleFontFamily) || CARD_TITLE_DEFAULT_FONT_FAMILY;
 }
 
 function resolvePosterTextFontFamily(value) {
@@ -1894,7 +1923,7 @@ function renderCardAlignControl(target) {
     if (!Number.isInteger(index) || !data[index]) return;
 
     const block = document.querySelector(`.block[data-card-editor-index="${index}"]`);
-    const container = block?.querySelector(`[data-align-control-target="${target}"]`);
+    const container = block ? block.querySelector(`[data-align-control-target="${target}"]`) : null;
     if (!container) return;
 
     const align = type === "cardTitle" ? data[index].titleAlign : data[index].textAlign;
@@ -1910,7 +1939,9 @@ function applyCardTextAlignPreview(index, type) {
 
     const selector = type === "cardTitle" ? ".cardTitle" : ".info";
     const element = card.querySelector(selector);
-    const align = type === "cardTitle" ? data[index]?.titleAlign : data[index]?.textAlign;
+    const align = type === "cardTitle"
+        ? (data[index] && data[index].titleAlign)
+        : (data[index] && data[index].textAlign);
     if (!element || !align) {
         scheduleCardPreviewRender(index);
         return;
@@ -1942,7 +1973,7 @@ function renderTextAlignControls(target, selectedValue, { disabled = false } = {
 }
 
 function resolveCardContentFontFamily(item) {
-    return item?.contentFontFamily && item.contentFontFamily !== INHERIT_FONT_VALUE
+    return item && item.contentFontFamily && item.contentFontFamily !== INHERIT_FONT_VALUE
         ? item.contentFontFamily
         : fontFamily;
 }
@@ -1951,7 +1982,7 @@ function renderFontOptionElements(selectedValue, extraOptions = []) {
     const optionMap = new Map();
 
     [...extraOptions, ...fontOptions].forEach((option) => {
-        if (!option?.value || optionMap.has(option.value)) return;
+        if (!option || !option.value || optionMap.has(option.value)) return;
         optionMap.set(option.value, option);
     });
 
@@ -2055,7 +2086,7 @@ function handleCardImageLoaded() {
 }
 
 function bindCardImageLoadHandlers(root) {
-    Array.from(root?.querySelectorAll(".cardImage") || []).forEach((image) => {
+    Array.from((root && root.querySelectorAll(".cardImage")) || []).forEach((image) => {
         if (image.dataset.loadHandlerBound === "true") return;
 
         image.dataset.loadHandlerBound = "true";
@@ -2252,7 +2283,7 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
 
     const subtitleElement = document.getElementById("subtitle");
     if (subtitleElement) {
-        const subtitleText = subtitleInput?.value ?? subtitleElement.innerText;
+        const subtitleText = subtitleInput && subtitleInput.value != null ? subtitleInput.value : subtitleElement.innerText;
         subtitleElement.classList.remove("typesetText");
         subtitleElement.innerText = subtitleText;
         subtitleElement.style.fontFamily = resolveSubtitleFontFamily();
@@ -2988,7 +3019,7 @@ function applyRichTextFont(index, value, selectEl = null) {
 
 function createPlainTextPasteFragment(text, doc = document) {
     const fragment = doc.createDocumentFragment();
-    const normalizedText = String(text ?? "")
+    const normalizedText = String(text == null ? "" : text)
         .replace(/\r\n?/g, "\n")
         .replace(/\u00a0/g, " ")
         .replace(/[\u200B-\u200D\uFEFF]/g, "");
@@ -3061,7 +3092,7 @@ function pastePlainText(event) {
     event.preventDefault();
 
     const editorEl = event.currentTarget;
-    const text = event.clipboardData?.getData("text/plain") ?? "";
+    const text = event.clipboardData ? event.clipboardData.getData("text/plain") : "";
     if (insertPlainTextIntoEditor(editorEl, text)) {
         dispatchRichTextInput(editorEl, text);
     }
@@ -3143,10 +3174,12 @@ function updateCustomPickerUi(target, { preview = true } = {}) {
     const saturation = Math.round(clampNumber(state.saturation, 0, 100));
     const value = Math.round(clampNumber(state.value, 0, 100));
 
-    config.panel?.style.setProperty("--picker-hue", String(hue));
-    config.panel?.style.setProperty("--picker-saturation", String(saturation));
-    config.panel?.style.setProperty("--picker-value", String(value));
-    config.panel?.style.setProperty("--picker-color", hex);
+    if (config.panel) {
+        config.panel.style.setProperty("--picker-hue", String(hue));
+        config.panel.style.setProperty("--picker-saturation", String(saturation));
+        config.panel.style.setProperty("--picker-value", String(value));
+        config.panel.style.setProperty("--picker-color", hex);
+    }
 
     if (config.hue && config.hue.value !== String(hue)) {
         config.hue.value = String(hue);
@@ -3184,7 +3217,7 @@ function setCustomPickerFromColor(target, color, options = {}) {
 
 function syncCustomPickerFromColor(target, color) {
     const config = getCustomPickerConfig(target);
-    if (!config || !config.panel?.hidden) return;
+    if (!config || !config.panel || !config.panel.hidden) return;
 
     setCustomPickerFromColor(target, color, { preview: false });
 }
@@ -3354,7 +3387,8 @@ function changeCardTitleFont(index, value, selectEl = null) {
     if (selectEl) {
         const nextFontFamily = resolveCardTitleFontFamily(data[index]);
         selectEl.style.fontFamily = nextFontFamily;
-        const titleInput = selectEl.closest(".block")?.querySelector("textarea");
+        const block = selectEl.closest(".block");
+        const titleInput = block ? block.querySelector("textarea") : null;
         if (titleInput) {
             titleInput.style.fontFamily = nextFontFamily;
         }
@@ -3542,7 +3576,7 @@ function openTextColorPicker() {
 function updateCustomPickerFromFieldEvent(target, event) {
     const config = getCustomPickerConfig(target);
     const state = customColorPickerState[target];
-    const rect = config?.field?.getBoundingClientRect();
+    const rect = config && config.field ? config.field.getBoundingClientRect() : null;
     if (!rect || !state) return;
 
     state.saturation = clampNumber(((event.clientX - rect.left) / rect.width) * 100, 0, 100);
@@ -3552,11 +3586,13 @@ function updateCustomPickerFromFieldEvent(target, event) {
 
 function bindCustomColorField(target) {
     const config = getCustomPickerConfig(target);
-    if (!config?.field) return;
+    if (!config || !config.field) return;
 
     config.field.addEventListener("pointerdown", (event) => {
         event.preventDefault();
-        config.field.setPointerCapture?.(event.pointerId);
+        if (config.field.setPointerCapture) {
+            config.field.setPointerCapture(event.pointerId);
+        }
         updateCustomPickerFromFieldEvent(target, event);
     });
 
@@ -3573,12 +3609,12 @@ function bindCustomColorPanel(target) {
 
     bindCustomColorField(target);
 
-    config.hue?.addEventListener("input", () => {
+    if (config.hue) config.hue.addEventListener("input", () => {
         state.hue = clampNumber(config.hue.value, 0, 360);
         updateCustomPickerUi(target);
     });
 
-    config.hex?.addEventListener("input", () => {
+    if (config.hex) config.hex.addEventListener("input", () => {
         const value = config.hex.value.trim();
         if (/^#[0-9a-fA-F]{6}$/.test(value)) {
             setCustomPickerFromColor(target, value);
@@ -3586,11 +3622,12 @@ function bindCustomColorPanel(target) {
     });
 
     [config.red, config.green, config.blue].forEach((input) => {
-        input?.addEventListener("input", () => {
+        if (!input) return;
+        input.addEventListener("input", () => {
             const hex = rgbToHex({
-                r: config.red?.value,
-                g: config.green?.value,
-                b: config.blue?.value
+                r: config.red ? config.red.value : undefined,
+                g: config.green ? config.green.value : undefined,
+                b: config.blue ? config.blue.value : undefined
             });
             setCustomPickerFromColor(target, hex);
         });
@@ -3603,7 +3640,7 @@ function syncCustomColorModalMode() {
     if (!activeCustomColorTarget) return;
 
     const config = getCustomPickerConfig(activeCustomColorTarget);
-    if (!config?.panel || config.panel.hidden) return;
+    if (!config || !config.panel || config.panel.hidden) return;
 
     const mobile = isMobileViewport();
     config.panel.classList.toggle("mobileCustomColorModal", mobile);
@@ -3639,11 +3676,11 @@ function createCardImageId() {
 }
 
 function canUseImageStore() {
-    return Boolean(imageStore?.isAvailable?.());
+    return Boolean(imageStore && imageStore.isAvailable && imageStore.isAvailable());
 }
 
 async function saveCardImageDataToStore(image) {
-    if (!canUseImageStore() || !image?.imageDataUrl) return image;
+    if (!canUseImageStore() || !image || !image.imageDataUrl) return image;
 
     const imageStoreId = getImageStoreId(image) || image.id || createCardImageId();
 
@@ -3705,7 +3742,7 @@ async function hydrateStoredCardImages() {
             } else if (imageStoreId) {
                 try {
                     const storedImage = await imageStore.getImage(imageStoreId);
-                    if (storedImage?.dataUrl) {
+                    if (storedImage && storedImage.dataUrl) {
                         nextImage = {
                             ...nextImage,
                             imageDataUrl: storedImage.dataUrl
@@ -3812,7 +3849,7 @@ async function changeCardImage(index, fileList) {
         syncImageCardLegacyFields(data[index]);
         renderLayoutChangePreview();
     } catch (error) {
-        window.alert(error?.message || "图片处理失败，请重试。");
+        window.alert((error && error.message) || "图片处理失败，请重试。");
     }
 }
 
@@ -3947,17 +3984,20 @@ function revealRecentlyMovedCardImage(index, imageIndex) {
 
     requestAnimationFrame(() => {
         const item = document.querySelector(`#cardEditor .cardImageEditorPreviewItem[data-card-image-editor-index="${index}:${imageIndex}"]`);
-        item?.scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-            inline: "nearest"
-        });
+        if (item) {
+            item.scrollIntoView({
+                behavior: "smooth",
+                block: "center",
+                inline: "nearest"
+            });
+        }
     });
 
     recentlyMovedCardImageHighlightTimer = window.setTimeout(() => {
         if (
-            recentlyMovedCardImage?.cardIndex !== index
-            || recentlyMovedCardImage?.imageIndex !== imageIndex
+            !recentlyMovedCardImage
+            || recentlyMovedCardImage.cardIndex !== index
+            || recentlyMovedCardImage.imageIndex !== imageIndex
         ) {
             return;
         }
@@ -3970,7 +4010,7 @@ function revealRecentlyMovedCardImage(index, imageIndex) {
 
 function getCardImageEditorItemFromPoint(clientX, clientY, cardIndex) {
     const element = document.elementFromPoint(clientX, clientY);
-    const item = element?.closest?.("#cardEditor .cardImageEditorPreviewItem");
+    const item = element && element.closest ? element.closest("#cardEditor .cardImageEditorPreviewItem") : null;
     if (!item) return null;
 
     const [itemCardIndex] = String(item.dataset.cardImageEditorIndex || "").split(":").map(Number);
@@ -3989,7 +4029,7 @@ function updateCardImageSortTargetFromPoint(clientX, clientY) {
 
     const { cardIndex } = cardImageSortDragState;
     const item = getCardImageEditorItemFromPoint(clientX, clientY, cardIndex);
-    const [, imageIndex] = String(item?.dataset.cardImageEditorIndex || "").split(":").map(Number);
+    const [, imageIndex] = String((item && item.dataset.cardImageEditorIndex) || "").split(":").map(Number);
     if (!Number.isInteger(imageIndex)) return;
 
     cardImageSortDragState.targetImageIndex = imageIndex;
@@ -4060,7 +4100,7 @@ function updateCardImageSortAutoScroll(clientX, clientY) {
 }
 
 function stopCardImageSortAutoScroll() {
-    if (cardImageSortDragState?.autoScrollFrame !== null && cardImageSortDragState?.autoScrollFrame !== undefined) {
+    if (cardImageSortDragState && cardImageSortDragState.autoScrollFrame !== null && cardImageSortDragState.autoScrollFrame !== undefined) {
         window.cancelAnimationFrame(cardImageSortDragState.autoScrollFrame);
     }
 
@@ -4080,7 +4120,9 @@ function cleanupCardImageSortDrag() {
     document.querySelectorAll("#cardEditor .cardImageEditorPreviewItem").forEach((item) => {
         item.classList.remove("cardImageSortDraggingItem", "cardImageSortDropTarget");
     });
-    cardImageSortDragState?.ghost?.remove();
+    if (cardImageSortDragState && cardImageSortDragState.ghost) {
+        cardImageSortDragState.ghost.remove();
+    }
     cardImageSortDragState = null;
 }
 
@@ -4119,7 +4161,9 @@ function startCardImageSortDrag(event, cardIndex, imageIndex) {
         autoScrollElement: null
     };
 
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    if (event.currentTarget.setPointerCapture) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+    }
     document.body.classList.add("cardImageSortDragging");
     item.classList.add("cardImageSortDraggingItem");
     updateCardImageSortDropTarget(cardIndex, imageIndex);
@@ -4243,11 +4287,13 @@ function revealRecentlyMovedCard(index) {
 
     requestAnimationFrame(() => {
         const block = document.querySelector(`#cardEditor .block[data-card-editor-index="${index}"]`);
-        block?.scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-            inline: "nearest"
-        });
+        if (block) {
+            block.scrollIntoView({
+                behavior: "smooth",
+                block: "center",
+                inline: "nearest"
+            });
+        }
     });
 
     recentlyMovedCardHighlightTimer = window.setTimeout(() => {
@@ -4261,7 +4307,7 @@ function revealRecentlyMovedCard(index) {
 
 function getCardEditorBlockFromPoint(clientX, clientY) {
     const element = document.elementFromPoint(clientX, clientY);
-    return element?.closest?.("#cardEditor .block") || null;
+    return element && element.closest ? element.closest("#cardEditor .block") : null;
 }
 
 function updateCardSortDropTarget(targetIndex) {
@@ -4279,7 +4325,9 @@ function cleanupCardSortDrag() {
     document.querySelectorAll("#cardEditor .block").forEach((block) => {
         block.classList.remove("cardSortDraggingBlock", "cardSortDropTarget");
     });
-    cardSortDragState?.ghost?.remove();
+    if (cardSortDragState && cardSortDragState.ghost) {
+        cardSortDragState.ghost.remove();
+    }
     cardSortDragState = null;
 }
 
@@ -4309,9 +4357,13 @@ function startCardSortDrag(event, index) {
         ghost
     };
 
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    if (event.currentTarget.setPointerCapture) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+    }
     document.body.classList.add("cardSortDragging");
-    block?.classList.add("cardSortDraggingBlock");
+    if (block) {
+        block.classList.add("cardSortDraggingBlock");
+    }
     updateCardSortDropTarget(index);
     document.addEventListener("pointermove", handleCardSortPointerMove);
     document.addEventListener("pointerup", finishCardSortDrag);
@@ -4324,7 +4376,7 @@ function handleCardSortPointerMove(event) {
     event.preventDefault();
     cardSortDragState.ghost.style.transform = `translate(${Math.round(event.clientX - cardSortDragState.offsetX)}px, ${Math.round(event.clientY - cardSortDragState.offsetY)}px)`;
     const block = getCardEditorBlockFromPoint(event.clientX, event.clientY);
-    const index = Number(block?.dataset.cardEditorIndex);
+    const index = Number(block ? block.dataset.cardEditorIndex : undefined);
     if (!Number.isInteger(index) || !data[index]) return;
 
     cardSortDragState.targetIndex = index;
@@ -4393,10 +4445,10 @@ let viewportResizeRenderFrame = null;
 let viewportResizeCompletionTimer = null;
 
 function getCurrentEditorWidth() {
-    const width = parseInt(editor?.style.width || "", 10);
+    const width = parseInt((editor && editor.style.width) || "", 10);
     if (!Number.isNaN(width)) return width;
 
-    const measuredWidth = Math.round(editor?.getBoundingClientRect().width || 0);
+    const measuredWidth = Math.round((editor && editor.getBoundingClientRect().width) || 0);
     return measuredWidth || 420;
 }
 
@@ -4552,9 +4604,13 @@ if (customColorModalBackdrop) {
     };
 }
 
+if (articleManagerBackdrop) {
+    articleManagerBackdrop.addEventListener("click", closeArticleManagerModal);
+}
+
 if (backgroundImageInput) {
     backgroundImageInput.onchange = function () {
-        changeBackgroundImage(this.files?.[0] || null);
+        changeBackgroundImage((this.files && this.files[0]) || null);
     };
 }
 

@@ -4,7 +4,7 @@
 
 function renderRichTextPreview(value, { sanitize = true } = {}) {
     const template = document.createElement("template");
-    template.innerHTML = sanitize ? sanitizeRichText(value) : String(value ?? "");
+    template.innerHTML = sanitize ? sanitizeRichText(value) : String(value == null ? "" : value);
 
     const paragraphs = [];
     let paragraph = document.createElement("div");
@@ -203,7 +203,7 @@ function createTypesetLineElement(tokens, adjustment = null, { includeShadow = f
     line.style.textAlign = textAlign;
     inner.style.transformOrigin = getTypesetTransformOrigin(textAlign);
 
-    if (adjustment?.type === "scale") {
+    if (adjustment && adjustment.type === "scale") {
         inner.style.transform = `scaleX(${adjustment.scale})`;
     }
 
@@ -221,7 +221,7 @@ function createTypesetLineElement(tokens, adjustment = null, { includeShadow = f
         span.textContent = token.text === " " ? "\u00a0" : token.text;
         applyTypesetTokenStyle(span, token.style);
 
-        if (adjustment?.type === "spacing" && index < tokens.length - 1 && isTypesetSpacingTarget(token)) {
+        if (adjustment && adjustment.type === "spacing" && index < tokens.length - 1 && isTypesetSpacingTarget(token)) {
             span.style.marginRight = `${adjustment.spacing}px`;
         }
 
@@ -270,7 +270,7 @@ function getTypesetCanvasFont(style) {
 }
 
 function getTypesetLetterSpacing(style) {
-    const value = parseFloat(style?.letterSpacing || "0");
+    const value = parseFloat((style && style.letterSpacing) || "0");
     return Number.isFinite(value) ? value : 0;
 }
 
@@ -284,7 +284,7 @@ function createFastTypesetRangeMeasurer(tokens, root) {
     const widthCache = new Map();
 
     tokens.forEach((token, index) => {
-        if (!token?.text) {
+        if (!token || !token.text) {
             widthPrefix[index + 1] = widthPrefix[index];
             spacingPrefix[index + 1] = spacingPrefix[index];
             return;
@@ -645,10 +645,10 @@ function hideTypesettingOverlay() {
 
 function showExportOverlay(message = "正在导出...") {
     const overlay = getPosterTypesettingOverlay();
-    const wasVisible = overlay?.classList.contains("visible") || false;
-    const oldAriaHidden = overlay?.getAttribute("aria-hidden") || "true";
-    const messageElement = overlay?.querySelector(".posterTypesettingMessage");
-    const oldMessage = messageElement?.textContent || "正在排版...";
+    const wasVisible = (overlay && overlay.classList.contains("visible")) || false;
+    const oldAriaHidden = (overlay && overlay.getAttribute("aria-hidden")) || "true";
+    const messageElement = overlay ? overlay.querySelector(".posterTypesettingMessage") : null;
+    const oldMessage = (messageElement && messageElement.textContent) || "正在排版...";
 
     showTypesettingOverlayNow(message);
 
@@ -809,15 +809,15 @@ function syncHeadlineTextWidths(poster = document.getElementById("poster")) {
 }
 
 function isTypesetForbiddenLineStart(token) {
-    return token?.text && TYPESET_FORBIDDEN_LINE_START.has(token.text);
+    return token && token.text && TYPESET_FORBIDDEN_LINE_START.has(token.text);
 }
 
 function isTypesetForbiddenLineEnd(token) {
-    return token?.text && TYPESET_FORBIDDEN_LINE_END.has(token.text);
+    return token && token.text && TYPESET_FORBIDDEN_LINE_END.has(token.text);
 }
 
 function isTypesetSpacingTarget(token) {
-    return token?.text && !/\s/.test(token.text);
+    return token && token.text && !/\s/.test(token.text);
 }
 
 function getTypesetSpacingTargetCount(tokens) {
@@ -1003,7 +1003,7 @@ function renderTypesetLines(element, lines) {
 function hasOverflowingTypesetLine(element, maxWidth) {
     const tolerance = 1;
 
-    return Array.from(element?.querySelectorAll(".typesetLineInner") || [])
+    return Array.from((element && element.querySelectorAll(".typesetLineInner")) || [])
         .some((line) => line.getBoundingClientRect().width > maxWidth + tolerance);
 }
 
@@ -1067,7 +1067,9 @@ function applyPosterTypesetting(poster = document.getElementById("poster")) {
         });
     }
 
-    cards?.querySelectorAll(".card").forEach(applyCardTypesetting);
+    if (cards) {
+        cards.querySelectorAll(".card").forEach(applyCardTypesetting);
+    }
 }
 
 function applyCardTypesetting(card) {
@@ -1112,9 +1114,9 @@ function getPhoneRenderSignature() {
         subtitlePosition,
         phoneResolution,
         phoneCssWidth: getPhoneExportCssWidth(resolution),
-        year: yearInput?.value || "",
-        side: sideInput?.value || "",
-        subtitle: subtitleInputElement?.value || ""
+        year: (yearInput && yearInput.value) || "",
+        side: (sideInput && sideInput.value) || "",
+        subtitle: (subtitleInputElement && subtitleInputElement.value) || ""
     });
 }
 
@@ -1132,8 +1134,8 @@ function setPosterSharedState(poster, previewFontScale = getPreviewFontScale()) 
     const subtitleInputElement = document.getElementById("subtitleInput");
 
     if (year) {
-        year.innerText = yearInput?.value || "";
-        year.dataset.shadowText = yearInput?.value || "";
+        year.innerText = (yearInput && yearInput.value) || "";
+        year.dataset.shadowText = (yearInput && yearInput.value) || "";
         year.style.fontFamily = resolveYearFontFamily();
         year.style.color = textColor;
         year.style.fontSize = `${globalFont.year * previewFontScale}px`;
@@ -1142,21 +1144,21 @@ function setPosterSharedState(poster, previewFontScale = getPreviewFontScale()) 
     }
 
     if (subtitle) {
-        subtitle.innerText = subtitleInputElement?.value || "";
+        subtitle.innerText = (subtitleInputElement && subtitleInputElement.value) || "";
         subtitle.style.fontFamily = resolveSubtitleFontFamily();
         subtitle.style.color = textColor;
         applySubtitleSettings(subtitle, previewFontScale);
         applyTextAlign(subtitle, subtitlePosition === "verticalLeft" ? "left" : subtitleTextAlign);
         subtitle.classList.remove("typesetText");
-        renderVerticalTextTarget("subtitle", subtitleInputElement?.value || "", poster);
+        renderVerticalTextTarget("subtitle", (subtitleInputElement && subtitleInputElement.value) || "", poster);
     }
 
     if (side) {
-        side.innerText = sideInput?.value || "";
+        side.innerText = (sideInput && sideInput.value) || "";
         side.style.fontFamily = resolveSideFontFamily();
         side.style.color = textColor;
         side.style.fontSize = `${globalFont.side * previewFontScale}px`;
-        renderVerticalTextTarget("side", sideInput?.value || "", poster);
+        renderVerticalTextTarget("side", (sideInput && sideInput.value) || "", poster);
     }
 
     if (copyright) {
@@ -1188,7 +1190,7 @@ async function ensurePhoneRenderLayout() {
     }
 
     const layoutPromise = (async () => {
-        if (document.fonts?.ready) {
+        if (document.fonts && document.fonts.ready) {
             await document.fonts.ready;
         }
 
@@ -1365,7 +1367,7 @@ function getVerticalParenthesisAdjustment(char) {
 }
 
 function createVerticalTextLayout(value) {
-    const columns = String(value ?? "")
+    const columns = String(value == null ? "" : value)
         .split("\n")
         .map((line) => {
             const chars = Array.from(line || " ").map((char) => {
@@ -1428,7 +1430,9 @@ function getVerticalTextTargetConfig(target) {
 
 function getVerticalTextTargetValue(config, fallbackElement = null) {
     const input = document.getElementById(config.inputId);
-    return input?.value ?? fallbackElement?.innerText ?? "";
+    if (input && input.value != null) return input.value;
+    if (fallbackElement && fallbackElement.innerText != null) return fallbackElement.innerText;
+    return "";
 }
 
 function renderVerticalTextTarget(target, value = null, poster = document.getElementById("poster")) {
@@ -1442,7 +1446,7 @@ function renderVerticalTextTarget(target, value = null, poster = document.getEle
         config.applySettings(element);
     }
 
-    const text = value ?? getVerticalTextTargetValue(config, element);
+    const text = value == null ? getVerticalTextTargetValue(config, element) : value;
     if (typeof config.isPreviewActive === "function" && !config.isPreviewActive()) {
         if (element.innerText !== text) {
             element.innerText = text;

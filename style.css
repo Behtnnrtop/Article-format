@@ -602,6 +602,17 @@ body.editorCollapsed #dragBar{
     border-bottom:none;
 }
 
+.editorTopActions{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    justify-content:space-between;
+    min-width:0;
+    margin:0 0 14px;
+    padding-bottom:12px;
+    border-bottom:1px solid #eceff3;
+}
+
 .articleManager{
     display:grid;
     align-items:center;
@@ -685,6 +696,35 @@ body.editorCollapsed #dragBar{
     cursor:not-allowed;
     box-shadow:none;
     transform:none;
+}
+
+.articleManagerBackdrop[hidden]{
+    display:none;
+}
+
+.articleManagerBackdrop{
+    position:fixed;
+    inset:0;
+    z-index:1200;
+    background:rgba(17,24,39,.22);
+}
+
+.articleManagerPanel{
+    display:none;
+}
+
+body.articleManagerOpen .articleManagerPanel{
+    position:fixed;
+    top:78px;
+    right:24px;
+    z-index:1201;
+    width:min(calc(var(--editor-width,100vw) * .92), calc(100vw - 48px));
+    display:grid;
+    margin:0;
+    border:1px solid rgba(17,24,39,.12);
+    border-radius:12px;
+    background:#ffffff;
+    box-shadow:0 22px 60px rgba(15,23,42,.22);
 }
 
 .copyStyleModal[hidden]{
@@ -846,12 +886,14 @@ body.editorCollapsed #dragBar{
 }
 
 #timelineToggleBtn,
+#articleManagerBtn,
 #bottomWatermarkToggleBtn,
 #monthTitleToggleBtn,
 #underlineToggleBtn,
 #sideHeaderToggleBtn,
 #subtitlePositionToggleBtn,
-#phonePreviewToggleBtn{
+#phonePreviewToggleBtn,
+#donateBtn{
     padding:7px 14px;
     font-size:13px;
     white-space:nowrap;
@@ -864,17 +906,41 @@ body.editorCollapsed #dragBar{
 }
 
 #timelineToggleBtn:hover,
+#articleManagerBtn:hover,
 #bottomWatermarkToggleBtn:hover,
 #monthTitleToggleBtn:hover,
 #underlineToggleBtn:hover,
 #sideHeaderToggleBtn:hover,
 #subtitlePositionToggleBtn:hover,
-#phonePreviewToggleBtn:hover{
+#phonePreviewToggleBtn:hover,
+#donateBtn:hover{
     background:#f8fafc;
     border-color:#cbd5e1;
     color:#111827;
     box-shadow:0 4px 10px rgba(15,23,42,.06);
     transform:translateY(-1px);
+}
+
+#articleManagerBtn{
+    padding:7px 14px;
+    font-size:13px;
+    line-height:1.25;
+    font-weight:700;
+}
+
+#donateBtn{
+    padding:4px 9px;
+    border-color:#fecaca;
+    background:#fff7f7;
+    color:#b91c1c;
+    font-size:11px;
+    line-height:1.2;
+}
+
+#donateBtn:hover{
+    background:#fff1f1;
+    border-color:#fca5a5;
+    color:#991b1b;
 }
 
 .editItem{
@@ -1037,6 +1103,13 @@ body.editorCollapsed #dragBar{
     border-radius:22px;
     background:#efefef;
     position:relative;
+}
+
+@supports not (aspect-ratio: 1 / 1){
+    .phoneScreen{
+        height:0;
+        padding-top:220%;
+    }
 }
 
 .phoneBackgroundCanvas{
@@ -2423,13 +2496,13 @@ button:hover{
 @media (max-width: 768px), (pointer: coarse) and (max-width: 1024px){
     body{
         flex-direction:column;
-        height:var(--app-viewport-height,100svh);
-        min-height:var(--app-viewport-height,100svh);
+        height:var(--app-viewport-height,100vh);
+        min-height:var(--app-viewport-height,100vh);
         overflow:hidden;
     }
 
     #preview{
-        flex:0 0 var(--mobile-preview-height,58svh);
+        flex:0 0 var(--mobile-preview-height,50vh);
         width:100vw;
         min-height:0;
         overflow-y:auto;
@@ -2674,7 +2747,7 @@ button:hover{
         display:none;
     }
 
-    .articleManager.mobilePanelActive,
+    .articleManagerPanel.mobilePanelActive,
     .editItem.mobilePanelActive,
     #cardEditor.mobilePanelActive,
     .mobileExportBtn.mobilePanelActive{
@@ -2692,6 +2765,10 @@ button:hover{
 
     .editorHeader{
         display:contents;
+    }
+
+    .editorTopActions{
+        display:none;
     }
 
     .editorHeader h2{
@@ -2728,6 +2805,10 @@ button:hover{
         padding:0 7px;
     }
 
+    .articleManagerPanel.mobilePanelActive{
+        display:grid;
+    }
+
     .copyStyleModal{
         align-items:flex-end;
         padding:12px;
@@ -2735,10 +2816,6 @@ button:hover{
 
     .copyStyleDialog{
         max-height:calc(var(--app-viewport-height,100vh) - 24px);
-    }
-
-    .articleManager.mobilePanelActive{
-        display:grid;
     }
 
     .editorHeaderActions{

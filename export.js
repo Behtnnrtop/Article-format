@@ -42,7 +42,7 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
     if (!exportState) return Promise.reject(new Error("未找到预览区域，无法导出。"));
 
     try {
-        if (document.fonts?.ready) {
+        if (document.fonts && document.fonts.ready) {
             await document.fonts.ready;
         }
         await waitForPosterImagesLoaded(exportState.poster);
@@ -114,7 +114,7 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
         }
 
         const canvas = await html2canvas(exportState.poster, captureOptions);
-        const protectedRanges = expectedInkRanges ?? getExpectedPosterInkRanges(canvas, exportState.poster);
+        const protectedRanges = expectedInkRanges == null ? getExpectedPosterInkRanges(canvas, exportState.poster) : expectedInkRanges;
         console.info("Poster capture result", {
             canvasWidth: canvas.width,
             canvasHeight: canvas.height,
@@ -172,7 +172,8 @@ async function exportDesktopLayoutImage() {
             hideCopyright: !showBottomWatermark,
             transparentPosterBackground: Boolean(backgroundImageDataUrl)
         });
-        const scale = sourceCanvas.width / (document.getElementById("poster")?.offsetWidth || sourceCanvas.width);
+        const posterElement = document.getElementById("poster");
+        const scale = sourceCanvas.width / ((posterElement && posterElement.offsetWidth) || sourceCanvas.width);
         const posterStyle = window.getComputedStyle(document.getElementById("poster"));
         const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
         const canvas = await addCanvasTopPadding(sourceCanvas, topPaddingHeight, posterStyle.backgroundColor || backgroundColor);
@@ -180,7 +181,7 @@ async function exportDesktopLayoutImage() {
         downloadBlob(blob, "年度总结.jpg");
     } catch (error) {
         console.error("Long image export failed", error);
-        window.alert(error?.message || "导出失败，请稍后再试。");
+        window.alert((error && error.message) || "导出失败，请稍后再试。");
     } finally {
         restoreOverlay();
     }
@@ -188,6 +189,7 @@ async function exportDesktopLayoutImage() {
 
 async function exportImage() {
     const restoreOverlay = showExportOverlay("正在导出...");
+    const shouldPreview = shouldOpenDesktopExportPreview("previewExportBtn");
 
     try {
         await waitForNextPaint();
@@ -223,10 +225,21 @@ async function exportImage() {
             exportScale
         });
         const blob = await canvasToBlob(canvas, "image/jpeg", 1);
-        downloadBlob(blob, "年度总结.jpg");
+        if (shouldPreview) {
+            const previewWindow = openDesktopExportPreviewWindow("长图导出预览");
+            showDesktopExportPreview(previewWindow, {
+                title: "长图导出预览",
+                fileBlob: blob,
+                downloadFilename: "年度总结.jpg",
+                downloadLabel: "下载 JPG",
+                images: [{ blob }]
+            });
+        } else {
+            downloadBlob(blob, "年度总结.jpg");
+        }
     } catch (error) {
         console.error("Long image export failed", error);
-        window.alert(error?.message || "导出失败，请稍后再试。");
+        window.alert((error && error.message) || "导出失败，请稍后再试。");
     } finally {
         restoreOverlay();
     }
@@ -237,18 +250,18 @@ function getWatermarkSettings(scale) {
     const poster = document.getElementById("poster");
     const copyrightStyle = copyright ? window.getComputedStyle(copyright) : null;
     const posterStyle = poster ? window.getComputedStyle(poster) : null;
-    const fontSize = parseFloat(copyrightStyle?.fontSize || "13") * scale;
-    const fontWeight = copyrightStyle?.fontWeight || "600";
-    const family = copyrightStyle?.fontFamily || fontFamily;
-    const lineHeightValue = parseFloat(copyrightStyle?.lineHeight || "");
+    const fontSize = parseFloat((copyrightStyle && copyrightStyle.fontSize) || "13") * scale;
+    const fontWeight = (copyrightStyle && copyrightStyle.fontWeight) || "600";
+    const family = (copyrightStyle && copyrightStyle.fontFamily) || fontFamily;
+    const lineHeightValue = parseFloat((copyrightStyle && copyrightStyle.lineHeight) || "");
     const lineHeight = Number.isFinite(lineHeightValue) ? lineHeightValue * scale : fontSize * 1.3;
 
     return {
-        text: copyright?.innerText || "制图：Behtnnrtop",
-        color: copyrightStyle?.color || "#b3bac3",
+        text: (copyright && copyright.innerText) || "制图：Behtnnrtop",
+        color: (copyrightStyle && copyrightStyle.color) || "#b3bac3",
         font: `${fontWeight} ${fontSize}px ${family}`,
         lineHeight,
-        background: posterStyle?.backgroundColor || backgroundColor
+        background: (posterStyle && posterStyle.backgroundColor) || backgroundColor
     };
 }
 
@@ -303,6 +316,186 @@ function canvasToBlob(canvas, type = "image/jpeg", quality = 0.95) {
 
 function isLikelyMobileBrowser() {
     return isMobileViewport() || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+function shouldOpenDesktopExportPreview(primaryButtonId) {
+    return !isLikelyMobileBrowser() && isVisibleElement(document.getElementById(primaryButtonId));
+}
+
+function openDesktopExportPreviewWindow(title = "导出预览") {
+    const previewWindow = window.open("", "_blank");
+    if (!previewWindow) return null;
+    previewWindow.opener = null;
+
+    previewWindow.document.open();
+    previewWindow.document.write(`<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>${title}</title>
+    <style>
+        *{box-sizing:border-box}
+        body{margin:0;min-height:100vh;background:#f4f4f1;color:#1f1f1f;font-family:"Microsoft YaHei",Arial,sans-serif}
+        .exportPreviewShell{min-height:100vh;padding:24px 32px 104px}
+        .exportPreviewHeader{position:sticky;top:0;z-index:2;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;margin:-24px -32px 24px;padding:16px 32px;border-bottom:1px solid rgba(0,0,0,.08);background:rgba(244,244,241,.92);backdrop-filter:blur(12px)}
+        .exportPreviewTitle{font-size:16px;font-weight:700}
+        .exportPreviewTools{display:flex;align-items:center;justify-content:flex-end;gap:14px}
+        .exportPreviewMeta{font-size:13px;color:#666}
+        .exportPreviewPager{display:flex;align-items:center;gap:10px;padding:4px;border:1px solid rgba(0,0,0,.1);border-radius:6px;background:rgba(255,255,255,.72)}
+        .exportPreviewPager[hidden]{display:none}
+        .exportPreviewPagerBtn{min-width:72px;height:28px;border:0;border-radius:4px;background:transparent;color:#222;font-size:13px;cursor:pointer}
+        .exportPreviewPagerBtn:hover{background:rgba(0,0,0,.08)}
+        .exportPreviewPagerBtn:disabled{color:#aaa;cursor:not-allowed}
+        .exportPreviewPagerValue{min-width:72px;text-align:center;color:#333;font-size:13px;font-variant-numeric:tabular-nums}
+        .exportPreviewZoom{display:flex;align-items:center;gap:8px;padding:4px;border:1px solid rgba(0,0,0,.1);border-radius:6px;background:rgba(255,255,255,.72)}
+        .exportPreviewZoomBtn{width:28px;height:28px;border:0;border-radius:4px;background:transparent;color:#222;font-size:18px;line-height:1;cursor:pointer}
+        .exportPreviewZoomBtn:hover{background:rgba(0,0,0,.08)}
+        .exportPreviewZoomBtn:disabled{color:#aaa;cursor:not-allowed}
+        .exportPreviewZoomValue{min-width:44px;text-align:center;color:#333;font-size:13px;font-variant-numeric:tabular-nums}
+        .exportPreviewStage{display:flex;flex-direction:column;align-items:center;gap:22px}
+        .exportPreviewImage{display:block;width:min(100%,calc(720px * var(--export-preview-zoom,1)));height:auto;box-shadow:0 12px 40px rgba(0,0,0,.18);background:#fff}
+        .exportPreviewSlices{width:min(100%,calc(720px * var(--export-preview-zoom,1)));display:flex;flex-direction:column;gap:22px}
+        .exportPreviewSlice{display:none;width:100%;height:auto;box-shadow:0 12px 40px rgba(0,0,0,.18);background:#fff}
+        .exportPreviewSlice.active{display:block}
+        .exportPreviewLoading{min-height:45vh;display:flex;align-items:center;justify-content:center;color:#666;font-size:15px}
+        .exportPreviewDownload{position:fixed;right:28px;bottom:28px;z-index:5;border:0;border-radius:6px;padding:13px 18px;color:#fff;background:#1f1f1f;font-size:15px;font-weight:700;box-shadow:0 10px 28px rgba(0,0,0,.24);cursor:pointer}
+        .exportPreviewDownload:hover{background:#000}
+    </style>
+</head>
+<body>
+    <div class="exportPreviewShell">
+        <div class="exportPreviewHeader">
+            <div class="exportPreviewTitle">${title}</div>
+            <div class="exportPreviewPager" hidden aria-label="切图切换">
+                <button class="exportPreviewPagerBtn" type="button" data-preview-prev>上一张</button>
+                <span class="exportPreviewPagerValue" data-preview-page-value>1/1</span>
+                <button class="exportPreviewPagerBtn" type="button" data-preview-next>下一张</button>
+            </div>
+            <div class="exportPreviewTools">
+                <div class="exportPreviewMeta">正在生成预览...</div>
+                <div class="exportPreviewZoom" aria-label="预览缩放">
+                    <button class="exportPreviewZoomBtn" type="button" data-preview-zoom-out aria-label="缩小预览">-</button>
+                    <span class="exportPreviewZoomValue" data-preview-zoom-value>100%</span>
+                    <button class="exportPreviewZoomBtn" type="button" data-preview-zoom-in aria-label="放大预览">+</button>
+                </div>
+            </div>
+        </div>
+        <div class="exportPreviewLoading">正在生成预览...</div>
+    </div>
+</body>
+</html>`);
+    previewWindow.document.close();
+    return previewWindow;
+}
+
+function showDesktopExportPreview(previewWindow, { title, fileBlob, downloadFilename, downloadLabel, images }) {
+    if (!previewWindow || previewWindow.closed) {
+        downloadBlob(fileBlob, downloadFilename);
+        return;
+    }
+
+    const doc = previewWindow.document;
+    const objectUrls = [];
+    const downloadUrl = URL.createObjectURL(fileBlob);
+    objectUrls.push(downloadUrl);
+    const imageItems = images.map((image) => {
+        const url = URL.createObjectURL(image.blob);
+        objectUrls.push(url);
+        return { ...image, url };
+    });
+
+    const stageHtml = imageItems.length === 1
+        ? `<img class="exportPreviewImage" src="${imageItems[0].url}" alt="导出图片预览">`
+        : `<div class="exportPreviewSlices">${imageItems.map((image, index) => `<img class="exportPreviewSlice${index === 0 ? " active" : ""}" src="${image.url}" alt="第 ${index + 1} 张切图预览">`).join("")}</div>`;
+
+    doc.body.innerHTML = `
+        <div class="exportPreviewShell">
+            <div class="exportPreviewHeader">
+                <div class="exportPreviewTitle">${title}</div>
+                <div class="exportPreviewPager" ${imageItems.length > 1 ? "" : "hidden"} aria-label="切图切换">
+                    <button class="exportPreviewPagerBtn" type="button" data-preview-prev>上一张</button>
+                    <span class="exportPreviewPagerValue" data-preview-page-value>1/${imageItems.length}</span>
+                    <button class="exportPreviewPagerBtn" type="button" data-preview-next>下一张</button>
+                </div>
+                <div class="exportPreviewTools">
+                    <div class="exportPreviewMeta">${imageItems.length === 1 ? "1 张图片" : `${imageItems.length} 张切图`}</div>
+                    <div class="exportPreviewZoom" aria-label="预览缩放">
+                        <button class="exportPreviewZoomBtn" type="button" data-preview-zoom-out aria-label="缩小预览">-</button>
+                        <span class="exportPreviewZoomValue" data-preview-zoom-value>100%</span>
+                        <button class="exportPreviewZoomBtn" type="button" data-preview-zoom-in aria-label="放大预览">+</button>
+                    </div>
+                </div>
+            </div>
+            <div class="exportPreviewStage">${stageHtml}</div>
+            <button class="exportPreviewDownload" type="button">${downloadLabel}</button>
+        </div>`;
+
+    if (imageItems.length > 1) {
+        let currentImageIndex = 0;
+        const previousButton = doc.querySelector("[data-preview-prev]");
+        const nextButton = doc.querySelector("[data-preview-next]");
+        const pageValue = doc.querySelector("[data-preview-page-value]");
+        const sliceImages = Array.from(doc.querySelectorAll(".exportPreviewSlice"));
+        const updateCurrentPreviewImage = () => {
+            sliceImages.forEach((image, index) => {
+                image.classList.toggle("active", index === currentImageIndex);
+            });
+            pageValue.textContent = `${currentImageIndex + 1}/${imageItems.length}`;
+            previousButton.disabled = currentImageIndex <= 0;
+            nextButton.disabled = currentImageIndex >= imageItems.length - 1;
+            window.setTimeout(() => previewWindow.scrollTo({ top: 0, behavior: "smooth" }), 0);
+        };
+        previousButton.addEventListener("click", () => {
+            currentImageIndex = Math.max(0, currentImageIndex - 1);
+            updateCurrentPreviewImage();
+        });
+        nextButton.addEventListener("click", () => {
+            currentImageIndex = Math.min(imageItems.length - 1, currentImageIndex + 1);
+            updateCurrentPreviewImage();
+        });
+        updateCurrentPreviewImage();
+    }
+
+    let previewZoom = 1;
+    const minPreviewZoom = 0.1;
+    const maxPreviewZoom = 2;
+    const zoomStep = 0.1;
+    const zoomOutButton = doc.querySelector("[data-preview-zoom-out]");
+    const zoomInButton = doc.querySelector("[data-preview-zoom-in]");
+    const zoomValue = doc.querySelector("[data-preview-zoom-value]");
+    const updatePreviewZoom = () => {
+        const roundedZoom = Math.round(previewZoom * 10) / 10;
+        previewZoom = Math.min(maxPreviewZoom, Math.max(minPreviewZoom, roundedZoom));
+        doc.documentElement.style.setProperty("--export-preview-zoom", String(previewZoom));
+        zoomValue.textContent = `${Math.round(previewZoom * 100)}%`;
+        zoomOutButton.disabled = previewZoom <= minPreviewZoom;
+        zoomInButton.disabled = previewZoom >= maxPreviewZoom;
+    };
+    zoomOutButton.addEventListener("click", () => {
+        previewZoom -= zoomStep;
+        updatePreviewZoom();
+    });
+    zoomInButton.addEventListener("click", () => {
+        previewZoom += zoomStep;
+        updatePreviewZoom();
+    });
+    updatePreviewZoom();
+
+    const button = doc.querySelector(".exportPreviewDownload");
+    button.addEventListener("click", () => {
+        const link = doc.createElement("a");
+        link.href = downloadUrl;
+        link.download = downloadFilename;
+        link.rel = "noopener";
+        doc.body.appendChild(link);
+        link.click();
+        link.remove();
+    });
+
+    previewWindow.addEventListener("beforeunload", () => {
+        objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    }, { once: true });
 }
 
 function downloadBlob(blob, filename, { fallbackWindow = null } = {}) {
@@ -434,10 +627,10 @@ function mergeCanvasRanges(ranges) {
 
 function getProtectedTextRanges(sourceCanvas, poster = document.getElementById("poster"), { textPadding = null, preferGeneratedLines = true } = {}) {
     const scale = getCanvasScale(sourceCanvas, poster);
-    const resolvedTextPadding = textPadding ?? Math.max(4, Math.round(8 * scale));
+    const resolvedTextPadding = textPadding == null ? Math.max(4, Math.round(8 * scale)) : textPadding;
     const lineRanges = preferGeneratedLines
         ? getElementCanvasRanges(
-            Array.from(poster?.querySelectorAll(".typesetLine, .verticalTextLine") || [])
+            Array.from((poster && poster.querySelectorAll(".typesetLine, .verticalTextLine")) || [])
                 .filter((element) => element.textContent.trim()),
             sourceCanvas,
             resolvedTextPadding,
@@ -447,7 +640,7 @@ function getProtectedTextRanges(sourceCanvas, poster = document.getElementById("
     const textSelectors = [".posterYear", ".posterSubtitle", ".cardTitle", ".info"];
 
     const ranges = textSelectors.flatMap((selector) =>
-        Array.from(poster?.querySelectorAll(selector) || [])
+        Array.from((poster && poster.querySelectorAll(selector)) || [])
             .filter((element) => window.getComputedStyle(element).display !== "none")
             .flatMap((element) => {
                 const elementRange = getElementCanvasRanges([element], sourceCanvas, 0, poster)[0];
@@ -471,7 +664,7 @@ function getProtectedTextRanges(sourceCanvas, poster = document.getElementById("
 
 function getGeneratedLineContentRanges(sourceCanvas, poster = document.getElementById("poster"), padding = 0) {
     const lineRanges = getElementCanvasRanges(
-        Array.from(poster?.querySelectorAll(".typesetLineInner, .verticalTextLine") || [])
+        Array.from((poster && poster.querySelectorAll(".typesetLineInner, .verticalTextLine")) || [])
             .filter((element) => element.textContent.trim()),
         sourceCanvas,
         padding,
@@ -489,7 +682,7 @@ function getGeneratedLineContentRanges(sourceCanvas, poster = document.getElemen
 function getProtectedImageElements(poster = document.getElementById("poster")) {
     const elements = new Set();
 
-    Array.from(poster?.querySelectorAll(".cardImage") || [])
+    Array.from((poster && poster.querySelectorAll(".cardImage")) || [])
         .filter((element) => element.complete && element.naturalWidth > 0)
         .forEach((element) => {
             elements.add(element.closest(".cardImageWrap") || element);
@@ -521,7 +714,7 @@ function getExpectedPosterInkRanges(sourceCanvas, poster = document.getElementBy
 }
 
 function getSlicedExportContentBottom(sourceCanvas, poster = document.getElementById("poster")) {
-    if (!sourceCanvas?.height || !poster) return sourceCanvas?.height || 1;
+    if (!(sourceCanvas && sourceCanvas.height) || !poster) return (sourceCanvas && sourceCanvas.height) || 1;
 
     const selectors = [".posterYear", ".posterSubtitle", ".posterSide", ".card"];
     const posterRect = poster.getBoundingClientRect();
@@ -555,7 +748,7 @@ function getCanvasPixelDistance(a, b) {
     return Math.abs(a[0] - b[0])
         + Math.abs(a[1] - b[1])
         + Math.abs(a[2] - b[2])
-        + Math.abs((a[3] ?? 255) - (b[3] ?? 255));
+        + Math.abs((a[3] == null ? 255 : a[3]) - (b[3] == null ? 255 : b[3]));
 }
 
 function mergeCanvasColumns(columns) {
@@ -580,7 +773,7 @@ function getTextScanColumns(sourceCanvas, poster = document.getElementById("post
     const padding = Math.max(3, Math.round(6 * scale));
     const selectors = [".posterYear", ".posterSubtitle", ".cardTitle", ".info", ".cardImageWrap"];
     const columns = selectors.flatMap((selector) =>
-        Array.from(poster?.querySelectorAll(selector) || [])
+        Array.from((poster && poster.querySelectorAll(selector)) || [])
             .filter((element) => window.getComputedStyle(element).display !== "none")
             .map((element) => getElementCanvasColumns(element, sourceCanvas, padding, poster))
             .filter(Boolean)
@@ -609,12 +802,12 @@ function getCanvasBackgroundSample(sourceCanvas, ctx) {
 
     if (!samples.length) return null;
 
-    return samples
+    const sortedSamples = samples
         .sort((a, b) => (
             samples.filter((sample) => getCanvasPixelDistance(sample, a) < 18).length
             - samples.filter((sample) => getCanvasPixelDistance(sample, b) < 18).length
-        ))
-        .at(-1);
+        ));
+    return sortedSamples[sortedSamples.length - 1];
 }
 
 function createCanvasInkDetector(sourceCanvas, poster = document.getElementById("poster"), { precomputeRows = false } = {}) {
@@ -708,9 +901,9 @@ function createCanvasInkDetector(sourceCanvas, poster = document.getElementById(
 }
 
 function canvasContainsExpectedPosterInk(sourceCanvas, poster = document.getElementById("poster"), expectedRanges = null) {
-    if (!sourceCanvas?.width || !sourceCanvas?.height || !poster) return false;
+    if (!(sourceCanvas && sourceCanvas.width) || !sourceCanvas.height || !poster) return false;
 
-    const protectedRanges = expectedRanges ?? getExpectedPosterInkRanges(sourceCanvas, poster);
+    const protectedRanges = expectedRanges == null ? getExpectedPosterInkRanges(sourceCanvas, poster) : expectedRanges;
     if (!protectedRanges.length) {
         return true;
     }
@@ -921,7 +1114,7 @@ function getTimelineCardSliceBounds(sourceCanvas, poster = document.getElementBy
     const scale = getCanvasScale(sourceCanvas, poster);
     const padding = Math.max(18, Math.round(18 * scale));
 
-    return Array.from(poster?.querySelectorAll(".card") || [])
+    return Array.from((poster && poster.querySelectorAll(".card")) || [])
         .map((card) => getElementCanvasBounds(card, sourceCanvas, padding, poster))
         .filter(Boolean);
 }
@@ -1024,7 +1217,7 @@ function getSlicedCaptureWindowSlices(posterWidth, exportScale, contentSliceHeig
 }
 
 async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, topPaddingHeight, watermarkBandHeight, watermarkSettings, outputHeight = null, shouldDrawWatermark = true, jpegQuality = DESKTOP_SLICED_EXPORT_JPEG_QUALITY) {
-    const sliceOutputHeight = outputHeight ?? topPaddingHeight + sourceHeight + watermarkBandHeight;
+    const sliceOutputHeight = outputHeight == null ? topPaddingHeight + sourceHeight + watermarkBandHeight : outputHeight;
     const watermarkTop = sliceOutputHeight - watermarkBandHeight;
     const sliceCanvas = document.createElement("canvas");
     const ctx = sliceCanvas.getContext("2d");
@@ -1055,7 +1248,9 @@ async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, to
     }
 
     const blob = await canvasToBlob(sliceCanvas, "image/jpeg", jpegQuality);
-    zip.file(`年度总结-${String(index).padStart(2, "0")}.jpg`, blob, { compression: "STORE" });
+    const filename = `年度总结-${String(index).padStart(2, "0")}.jpg`;
+    zip.file(filename, blob, { compression: "STORE" });
+    return { filename, blob };
 }
 
 function setButtonBusy(button, busyText) {
@@ -1172,7 +1367,7 @@ async function captureSlicedExportWindow({
     throw lastError || new Error("图片生成失败，请稍后再试。");
 }
 
-async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, exportScale, jpegQuality = DESKTOP_SLICED_EXPORT_JPEG_QUALITY) {
+async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, exportScale, jpegQuality = DESKTOP_SLICED_EXPORT_JPEG_QUALITY, previewImages = null) {
     const exportStartedAt = performance.now();
     await waitForPosterImagesLoaded(phonePoster);
     const posterWidth = getPhoneExportCssWidth(resolution);
@@ -1294,7 +1489,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
             }
 
             const sliceComposeStartedAt = performance.now();
-            await addSliceToZip(
+            const sliceImage = await addSliceToZip(
                 zip,
                 sourceCanvas,
                 localY,
@@ -1307,6 +1502,9 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
                 showBottomWatermark,
                 jpegQuality
             );
+            if (Array.isArray(previewImages)) {
+                previewImages.push(sliceImage);
+            }
             sliceComposeMs += performance.now() - sliceComposeStartedAt;
 
             sourceY += currentContentHeight;
@@ -1336,6 +1534,7 @@ async function exportSlicedImagesZip() {
     const button = getActiveExportButton("previewExportSlicesBtn", "exportSlicesBtn");
     const restoreButton = setButtonBusy(button);
     const restoreOverlay = showExportOverlay("正在导出...");
+    const shouldPreview = shouldOpenDesktopExportPreview("previewExportSlicesBtn");
 
     try {
         await waitForNextPaint();
@@ -1355,14 +1554,26 @@ async function exportSlicedImagesZip() {
         const slicedJpegQuality = isLikelyMobileBrowser()
             ? MOBILE_SLICED_EXPORT_JPEG_QUALITY
             : DESKTOP_SLICED_EXPORT_JPEG_QUALITY;
-        await addWindowedSlicedPosterToZip(zip, phonePoster, resolution, exportScale, slicedJpegQuality);
+        const previewImages = shouldPreview ? [] : null;
+        await addWindowedSlicedPosterToZip(zip, phonePoster, resolution, exportScale, slicedJpegQuality, previewImages);
 
         const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
         const filename = "年度总结-已切图jpg.zip";
-        downloadBlob(zipBlob, filename);
+        if (shouldPreview) {
+            const previewWindow = openDesktopExportPreviewWindow("切图导出预览");
+            showDesktopExportPreview(previewWindow, {
+                title: "切图导出预览",
+                fileBlob: zipBlob,
+                downloadFilename: filename,
+                downloadLabel: "下载 ZIP",
+                images: previewImages
+            });
+        } else {
+            downloadBlob(zipBlob, filename);
+        }
     } catch (error) {
         console.error("Sliced image export failed", error);
-        window.alert(error?.message || "切图导出失败，请稍后再试。");
+        window.alert((error && error.message) || "切图导出失败，请稍后再试。");
     } finally {
         restoreOverlay();
         restoreButton();

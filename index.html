@@ -4,9 +4,75 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1.0">
     <title>长文排版</title>
-    <link rel="stylesheet" href="style.css?v=81">
+    <script>
+        (function () {
+            if (document.documentMode) {
+                document.documentElement.className += (document.documentElement.className ? " " : "") + "unsupported-browser";
+            }
+        })();
+    </script>
+    <style>
+        .unsupportedBrowserNotice{
+            display:none;
+        }
+
+        html.unsupported-browser body{
+            display:block;
+            width:auto;
+            height:auto;
+            min-height:100vh;
+            overflow:auto;
+            background:#f6f7f9;
+        }
+
+        html.unsupported-browser #customColorModalBackdrop,
+        html.unsupported-browser #copyStyleModal,
+        html.unsupported-browser #articleManagerBackdrop,
+        html.unsupported-browser #preview,
+        html.unsupported-browser #phoneRenderHost,
+        html.unsupported-browser .previewExportActions,
+        html.unsupported-browser #mobileTypesetRefreshBtn,
+        html.unsupported-browser .mobileCurrentWordCount,
+        html.unsupported-browser #dragBar,
+        html.unsupported-browser #editor,
+        html.unsupported-browser .phonePreviewPanel{
+            display:none !important;
+        }
+
+        html.unsupported-browser .unsupportedBrowserNotice{
+            display:block;
+            max-width:520px;
+            margin:96px auto;
+            padding:28px;
+            border:1px solid #d8dee8;
+            border-radius:8px;
+            color:#1f2937;
+            font-family:"Microsoft YaHei",Arial,sans-serif;
+            background:#ffffff;
+            box-shadow:0 12px 32px rgba(15,23,42,.12);
+        }
+
+        .unsupportedBrowserNotice h1{
+            margin:0 0 12px;
+            font-size:24px;
+            line-height:1.35;
+        }
+
+        .unsupportedBrowserNotice p{
+            margin:0 0 10px;
+            color:#4b5563;
+            font-size:15px;
+            line-height:1.7;
+        }
+    </style>
+    <link rel="stylesheet" href="style.css?v=90">
 </head>
 <body>
+    <div id="unsupportedBrowserNotice" class="unsupportedBrowserNotice" role="alert">
+        <h1>当前浏览器不支持该网站</h1>
+        <p>抱歉，这个网站目前不支持 360 兼容模式 / IE 内核。</p>
+        <p>请在切换到360极速模式，使用 Chrome、Edge 浏览器，或更新浏览器版本后重新尝试。</p>
+    </div>
     <div id="customColorModalBackdrop" class="customColorModalBackdrop" hidden></div>
     <div id="copyStyleModal" class="copyStyleModal" hidden role="dialog" aria-modal="true" aria-labelledby="copyStyleModalTitle">
         <div class="copyStyleDialog">
@@ -24,6 +90,7 @@
             </div>
         </div>
     </div>
+    <div id="articleManagerBackdrop" class="articleManagerBackdrop" hidden></div>
     <div id="preview">
         <div id="posterTypesettingOverlay" class="posterTypesettingOverlay visible" aria-hidden="false">
             <div class="posterTypesettingMessage">正在排版...</div>
@@ -57,7 +124,12 @@
     <div id="editor">
         <div class="mobileExportWarning">如果字符数大于7000，请不要在手机端导出图片</div>
 
-        <div class="articleManager" data-mobile-panel="article" aria-label="文章管理">
+        <div class="editorTopActions" data-mobile-panel="article">
+            <button id="donateBtn" type="button" aria-label="支持网站" title="支持网站" onclick="window.open('https://share.mubu.com/doc/5UcQ7YVxdct','_blank','noopener,noreferrer')">支持网站</button>
+            <button id="articleManagerBtn" type="button" onclick="openArticleManagerModal()">文章管理</button>
+        </div>
+
+        <div class="articleManager articleManagerPanel" data-mobile-panel="article" aria-label="文章管理">
             <label for="articleSelect">文章管理</label>
             <select id="articleSelect" onchange="switchArticle(this.value)"></select>
             <button type="button" onclick="createArticle()">新建</button>
@@ -278,14 +350,56 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script src="paragraphs.js?v=20260901-3"></script>
-    <script src="image-store.js?v=20260826-1"></script>
-    <script src="layout.js?v=20260904-1"></script>
-    <script src="export.js?v=20260904-3"></script>
-    <script src="script.js?v=20260904-1"></script>
-    <script src="analytics.js?v=20260903-1"></script>
+    <script>
+        (function () {
+            "use strict";
+
+            function showUnsupportedBrowserNotice() {
+                var notice = document.getElementById("unsupportedBrowserNotice");
+                if (notice) {
+                    notice.style.display = "block";
+                }
+            }
+
+            if (document.documentMode) {
+                if (document.readyState === "loading") {
+                    document.addEventListener("DOMContentLoaded", showUnsupportedBrowserNotice);
+                } else {
+                    showUnsupportedBrowserNotice();
+                }
+                return;
+            }
+
+            var scripts = [
+                "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
+                "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+                "paragraphs.js?v=20260901-4",
+                "image-store.js?v=20260826-1",
+                "layout.js?v=20260910-1",
+                "export.js?v=20260910-1",
+                "script.js?v=20260910-9",
+                "analytics.js?v=20260910-1"
+            ];
+
+            function loadScript(index) {
+                var script;
+                if (index >= scripts.length) return;
+
+                script = document.createElement("script");
+                script.src = scripts[index];
+                script.onload = function () {
+                    loadScript(index + 1);
+                };
+                script.onerror = function () {
+                    console.error("Script load failed:", scripts[index]);
+                    loadScript(index + 1);
+                };
+                document.body.appendChild(script);
+            }
+
+            loadScript(0);
+        })();
+    </script>
 
 </body>
 </html>

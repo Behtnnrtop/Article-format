@@ -75,7 +75,7 @@
         }
 
         function isImageCard(item) {
-            return item?.type === CARD_TYPE_IMAGE;
+            return item && item.type === CARD_TYPE_IMAGE;
         }
 
         function normalizeData(items, schemaVersion) {
@@ -130,14 +130,14 @@
                     return createImageCard({
                         ...normalizedBase,
                         images: normalizedImages,
-                        imageDataUrl: normalizedImages[0]?.imageDataUrl || "",
-                        imageName: normalizedImages[0]?.imageName || "",
-                        imageMimeType: normalizedImages[0]?.imageMimeType || "",
-                        imageOriginalMimeType: normalizedImages[0]?.imageOriginalMimeType || "",
-                        imageHasTransparency: normalizedImages[0]?.imageHasTransparency === true,
-                        imageBytes: normalizedImages[0]?.imageBytes || 0,
-                        imageWidth: normalizedImages[0]?.imageWidth || 0,
-                        imageHeight: normalizedImages[0]?.imageHeight || 0,
+                        imageDataUrl: (normalizedImages[0] && normalizedImages[0].imageDataUrl) || "",
+                        imageName: (normalizedImages[0] && normalizedImages[0].imageName) || "",
+                        imageMimeType: (normalizedImages[0] && normalizedImages[0].imageMimeType) || "",
+                        imageOriginalMimeType: (normalizedImages[0] && normalizedImages[0].imageOriginalMimeType) || "",
+                        imageHasTransparency: Boolean(normalizedImages[0] && normalizedImages[0].imageHasTransparency === true),
+                        imageBytes: (normalizedImages[0] && normalizedImages[0].imageBytes) || 0,
+                        imageWidth: (normalizedImages[0] && normalizedImages[0].imageWidth) || 0,
+                        imageHeight: (normalizedImages[0] && normalizedImages[0].imageHeight) || 0,
                         imageWidthPercent: [50, 75, 100].includes(item.imageWidthPercent) ? item.imageWidthPercent : 100,
                         imageFit: item.imageFit === "cover" ? "cover" : "contain"
                     });
@@ -291,7 +291,7 @@
         }
 
         function waitForPosterImagesLoaded(root) {
-            const images = Array.from(root?.querySelectorAll("img") || []);
+            const images = Array.from((root && root.querySelectorAll("img")) || []);
             if (!images.length) return Promise.resolve();
 
             return Promise.all(images.map((image) => {
@@ -437,7 +437,7 @@
                 : "未上传图片";
             const imagePreviewHtml = images.length
                 ? `<div class="cardImageEditorPreviewList">${images.map((image, imageIndex) => `
-                    <div class="cardImageEditorPreviewItem${recentlyMovedCardImage?.cardIndex === index && recentlyMovedCardImage?.imageIndex === imageIndex ? " recentlyMovedCardImage" : ""}" data-card-image-editor-index="${index}:${imageIndex}">
+                    <div class="cardImageEditorPreviewItem${recentlyMovedCardImage && recentlyMovedCardImage.cardIndex === index && recentlyMovedCardImage.imageIndex === imageIndex ? " recentlyMovedCardImage" : ""}" data-card-image-editor-index="${index}:${imageIndex}">
                         <div class="cardImageEditorPreviewName">${imageIndex + 1}. ${escapeHtml(image.imageName || "图片")}，${formatBytes(image.imageBytes)}，${image.imageWidth || 0}×${image.imageHeight || 0}</div>
                         <div class="cardImageEditorPreviewBody">
                             ${renderImageSortHandle(index, imageIndex, images.length)}
