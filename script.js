@@ -6,8 +6,10 @@ const STORAGE_KEY = "article-summary-state";
 const ARTICLE_INDEX_STORAGE_KEY = "article-summary-article-index";
 const CURRENT_ARTICLE_ID_STORAGE_KEY = "article-summary-current-article-id";
 const ARTICLE_STATE_KEY_PREFIX = "article-summary-article:";
+const CHANGELOG_SEEN_DATE_STORAGE_KEY = "article-summary-changelog-seen-date";
+const CHANGELOG_URL = "CHANGELOG.md";
 const ARTICLE_INDEX_SCHEMA_VERSION = 1;
-const STATE_SCHEMA_VERSION = 18;
+const STATE_SCHEMA_VERSION = 20;
 const CONTENT_EDITOR_PLACEHOLDER = "输入段落内容...";
 const CARD_TITLE_PLACEHOLDER = "输入段落标题...";
 
@@ -24,7 +26,10 @@ let backgroundImageBlendEdge = 0;
 let textColor = "#111111";
 let recentBackgroundColors = [];
 let recentTextColors = [];
-let fontFamily = '"Microsoft YaHei",sans-serif';
+const GLOBAL_DEFAULT_FONT_FAMILY = '"Microsoft YaHei",sans-serif';
+const SONGTI_FONT_FAMILY = 'SimSun,"Songti SC","STSong",serif';
+
+let fontFamily = GLOBAL_DEFAULT_FONT_FAMILY;
 const CARD_TITLE_DEFAULT_FONT_FAMILY = '"Songti SC","STSong","SimSun",serif';
 const INHERIT_FONT_VALUE = "__inherit__";
 let yearFontFamily = INHERIT_FONT_VALUE;
@@ -42,6 +47,7 @@ let sideHeaderReserve = 0;
 let showTimeline = true;
 let showMonthTitles = true;
 let showMonthUnderlines = true;
+let showParagraphDividers = false;
 let showSideHeader = true;
 let showYearShadow = true;
 let showBottomWatermark = true;
@@ -87,9 +93,10 @@ let activeMobileEditorPanel = "style";
 
 function getViewportSize() {
     const viewport = window.visualViewport;
+    const layoutWidth = window.innerWidth || document.documentElement.clientWidth || (viewport && viewport.width) || 0;
 
     return {
-        width: (viewport && viewport.width) || window.innerWidth,
+        width: layoutWidth,
         height: (viewport && viewport.height) || window.innerHeight
     };
 }
@@ -255,12 +262,16 @@ const articleManagerBackdrop = document.getElementById("articleManagerBackdrop")
 const copyStyleModal = document.getElementById("copyStyleModal");
 const copyStyleSourceLabel = document.getElementById("copyStyleSourceLabel");
 const copyStyleArticleList = document.getElementById("copyStyleArticleList");
+const changelogModal = document.getElementById("changelogModal");
+const changelogContent = document.getElementById("changelogContent");
 const sideSpacingInput = document.getElementById("sideSpacingInput");
 const paragraphTitleSpacingInput = document.getElementById("paragraphTitleSpacingInput");
 const moduleSpacingInput = document.getElementById("moduleSpacingInput");
 const topPaddingInput = document.getElementById("topPaddingInput");
 const sideHeaderReserveInput = document.getElementById("sideHeaderReserveInput");
 const customColorModalBackdrop = document.getElementById("customColorModalBackdrop");
+const textColorResetGlobalBtn = document.querySelector("#textCustomColorPanel .customColorResetGlobal");
+let richTextColorPanelHome = null;
 const colorPickerControls = {
     background: {
         panel: document.getElementById("backgroundCustomColorPanel"),
@@ -293,19 +304,229 @@ const colorPickerControls = {
         addRecent: (value) => {
             recentTextColors = addRecentColor(recentTextColors, value);
         }
+    },
+    richText: {
+        panel: document.getElementById("textCustomColorPanel"),
+        field: document.getElementById("textColorField"),
+        hue: document.getElementById("textHueRange"),
+        chip: document.getElementById("textColorPreviewChip"),
+        hex: document.getElementById("textHexInput"),
+        red: document.getElementById("textRedInput"),
+        green: document.getElementById("textGreenInput"),
+        blue: document.getElementById("textBlueInput"),
+        getValue: getRichTextColorPickerValue,
+        preview: previewRichTextColorPicker,
+        commit: confirmRichTextColorPicker,
+        cancel: cancelRichTextColorPicker,
+        addRecent: () => {}
     }
 };
 const customColorPickerState = {
     background: { hue: 0, saturation: 0, value: 0, originalColor: backgroundColor },
-    text: { hue: 0, saturation: 0, value: 0, originalColor: textColor }
+    text: { hue: 0, saturation: 0, value: 0, originalColor: textColor },
+    richText: { hue: 0, saturation: 0, value: 0, originalColor: textColor }
 };
 let activeCustomColorTarget = null;
+let richTextColorPickerContext = null;
+let changelogLoadPromise = null;
+let changelogState = {
+    raw: "",
+    sections: [],
+    latestDate: ""
+};
 
 function normalizeColorValue(value) {
     if (typeof value !== "string") return "";
 
     const color = value.trim().toLowerCase();
     return /^#[0-9a-f]{6}$/.test(color) ? color : "";
+}
+
+function getLocalDateString(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+}
+
+function parseChangelogMarkdown(markdown) {
+    const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+    const sections = [];
+    let currentSection = null;
+    let title = "";
+
+    lines.forEach((line) => {
+        const titleMatch = line.match(/^#\s+(.+?)\s*$/);
+        if (!title && titleMatch) {
+            title = titleMatch[1];
+            return;
+        }
+
+        const sectionMatch = line.match(/^##\s+(.+?)\s*(?:\((\d{4}-\d{2}-\d{2})\))?\s*$/);
+        if (sectionMatch) {
+            currentSection = {
+                heading: sectionMatch[1].trim(),
+                date: sectionMatch[2] || "",
+                lines: []
+            };
+            sections.push(currentSection);
+            return;
+        }
+
+        if (currentSection) {
+            currentSection.lines.push(line);
+        }
+    });
+
+    const latestDate = sections.reduce((latest, section) => {
+        return section.date && section.date > latest ? section.date : latest;
+    }, "");
+
+    return {
+        title,
+        sections,
+        latestDate
+    };
+}
+
+function renderChangelogSections(parsed) {
+    if (!changelogContent) return;
+
+    changelogContent.innerHTML = "";
+
+    if (!parsed || !parsed.sections || !parsed.sections.length) {
+        const empty = document.createElement("p");
+        empty.className = "changelogEmpty";
+        empty.textContent = "暂无更新日志。";
+        changelogContent.appendChild(empty);
+        return;
+    }
+
+    parsed.sections.slice().reverse().forEach((section, index) => {
+        const sectionElement = document.createElement("section");
+        sectionElement.className = "changelogVersion";
+        if (index === 0) {
+            sectionElement.classList.add("latest");
+        }
+
+        const heading = document.createElement("h4");
+        heading.textContent = section.date ? `${section.heading} (${section.date})` : section.heading;
+        sectionElement.appendChild(heading);
+
+        let list = null;
+        section.lines.forEach((line) => {
+            const trimmed = line.trim();
+            if (!trimmed) {
+                list = null;
+                return;
+            }
+
+            const bulletMatch = trimmed.match(/^[-*]\s+(.+)$/);
+            if (bulletMatch) {
+                if (!list) {
+                    list = document.createElement("ul");
+                    sectionElement.appendChild(list);
+                }
+                const item = document.createElement("li");
+                item.textContent = bulletMatch[1];
+                list.appendChild(item);
+                return;
+            }
+
+            list = null;
+            const paragraph = document.createElement("p");
+            paragraph.textContent = trimmed;
+            sectionElement.appendChild(paragraph);
+        });
+
+        changelogContent.appendChild(sectionElement);
+    });
+}
+
+function renderChangelogError() {
+    if (!changelogContent) return;
+
+    changelogContent.innerHTML = "";
+    const error = document.createElement("p");
+    error.className = "changelogError";
+    error.textContent = "更新日志加载失败，请稍后重试。";
+    changelogContent.appendChild(error);
+}
+
+function loadChangelogContent() {
+    if (changelogState.sections.length) return Promise.resolve(changelogState);
+    if (changelogLoadPromise) return changelogLoadPromise;
+
+    changelogLoadPromise = window.fetch(CHANGELOG_URL, { cache: "no-store" })
+        .then((response) => {
+            if (!response.ok) {
+                throw new Error(`Failed to load changelog: ${response.status}`);
+            }
+            return response.text();
+        })
+        .then((markdown) => {
+            changelogState = parseChangelogMarkdown(markdown);
+            changelogState.raw = markdown;
+            renderChangelogSections(changelogState);
+            return changelogState;
+        })
+        .catch((error) => {
+            console.warn("Failed to load changelog", error);
+            changelogLoadPromise = null;
+            renderChangelogError();
+            throw error;
+        });
+
+    return changelogLoadPromise;
+}
+
+function openChangelogModal() {
+    if (!changelogModal) return;
+
+    changelogModal.hidden = false;
+    loadChangelogContent().catch(() => {});
+}
+
+function closeChangelogModal() {
+    if (!changelogModal) return;
+
+    changelogModal.hidden = true;
+}
+
+function getStoredChangelogSeenDate() {
+    try {
+        return window.localStorage.getItem(CHANGELOG_SEEN_DATE_STORAGE_KEY) || "";
+    } catch (error) {
+        return "";
+    }
+}
+
+function storeChangelogSeenDate(date) {
+    if (!date) return;
+
+    try {
+        window.localStorage.setItem(CHANGELOG_SEEN_DATE_STORAGE_KEY, date);
+    } catch (error) {
+        console.warn("Failed to store changelog seen date", error);
+    }
+}
+
+async function showChangelogModalOnceForLatestUpdate() {
+    let parsed;
+
+    try {
+        parsed = await loadChangelogContent();
+    } catch (error) {
+        return;
+    }
+
+    const latestDate = parsed && parsed.latestDate;
+    if (!latestDate || getLocalDateString() < latestDate) return;
+    if (getStoredChangelogSeenDate() === latestDate) return;
+
+    openChangelogModal();
+    storeChangelogSeenDate(latestDate);
 }
 
 function normalizeRecentColors(colors) {
@@ -450,11 +671,29 @@ function buildPaletteColors(recentColors) {
 }
 
 const fallbackFontOptions = [
-    { label: "默认字体", value: '"Microsoft YaHei",sans-serif' },
-    { label: "宋体", value: 'SimSun,"Songti SC","STSong",serif' }
+    { label: "微软雅黑", value: GLOBAL_DEFAULT_FONT_FAMILY, matchValues: ['"Microsoft YaHei"', "Microsoft YaHei"] },
+    { label: "宋体", value: SONGTI_FONT_FAMILY, matchValues: ['"SimSun"', "SimSun", '"Songti SC"', "Songti SC", '"STSong"', "STSong"] }
 ];
 
 let fontOptions = [...fallbackFontOptions];
+let systemFontOptions = [];
+const defaultInheritedFontOption = {
+    label: "默认字体",
+    value: INHERIT_FONT_VALUE,
+    matchValues: [GLOBAL_DEFAULT_FONT_FAMILY],
+    matchPrimaryValues: false,
+    dedupeSystemFont: false
+};
+const explicitSongtiFontOption = fallbackFontOptions[1];
+const defaultPosterFontOptions = [
+    defaultInheritedFontOption,
+    explicitSongtiFontOption
+];
+const cardTitleFontOptions = [
+    { label: "默认字体", value: CARD_TITLE_DEFAULT_FONT_FAMILY },
+    fallbackFontOptions[0],
+    explicitSongtiFontOption
+];
 
 const chineseFontLabels = new Map([
     ["microsoft yahei", "微软雅黑"],
@@ -517,6 +756,7 @@ const DEFAULT_ARTICLE_DATA = [
         titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
         contentFontFamily: INHERIT_FONT_VALUE,
         contentFontToolbarValue: INHERIT_FONT_VALUE,
+        contentColor: "",
         titleAlign: "left",
         textAlign: "left",
         hidden: false,
@@ -533,6 +773,7 @@ const DEFAULT_ARTICLE_DATA = [
         titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
         contentFontFamily: INHERIT_FONT_VALUE,
         contentFontToolbarValue: INHERIT_FONT_VALUE,
+        contentColor: "",
         titleAlign: "left",
         textAlign: "left",
         hidden: false,
@@ -564,7 +805,6 @@ let backgroundImageCanvasCache = {
     promise: null,
     image: null
 };
-const richTextSelections = new Map();
 const collapsedCardEditorIndexes = new Set();
 const TEXT_ALIGN_VALUES = Object.freeze(["left", "center", "right"]);
 const TEXT_ALIGN_LABELS = Object.freeze({
@@ -591,6 +831,7 @@ const COPY_STYLE_STATE_KEYS = Object.freeze([
     "showTimeline",
     "showMonthTitles",
     "showMonthUnderlines",
+    "showParagraphDividers",
     "showSideHeader",
     "showYearShadow",
     "showBottomWatermark",
@@ -622,6 +863,7 @@ const {
     escapeHtml,
     plainTextToRichText,
     sanitizeRichText,
+    normalizeColorValue,
     normalizeTextAlign,
     renderRichTextPreview,
     renderTextAlignControls,
@@ -629,18 +871,48 @@ const {
     resolveCardContentFontFamily,
     getItemLineSpacing,
     getItemParagraphSpacing,
-    renderFontOptionElements
+    renderFontOptionElements,
+    getTextColor: () => textColor
 });
 
 const imageStore = window.ArticleImageStore || null;
-
-function createArticleId() {
-    const randomPart = Math.random().toString(36).slice(2, 8);
-    return `article_${Date.now().toString(36)}_${randomPart}`;
-}
+const articleWorkspace = window.ArticleWorkspace.createArticleWorkspace({
+    storage: window.localStorage,
+    keys: {
+        legacyState: STORAGE_KEY,
+        articleIndex: ARTICLE_INDEX_STORAGE_KEY,
+        currentArticleId: CURRENT_ARTICLE_ID_STORAGE_KEY,
+        articleStatePrefix: ARTICLE_STATE_KEY_PREFIX
+    },
+    articleIndexSchemaVersion: ARTICLE_INDEX_SCHEMA_VERSION,
+    stateSchemaVersion: STATE_SCHEMA_VERSION,
+    copyStyleStateKeys: COPY_STYLE_STATE_KEYS,
+    copyStyleContentKeys: COPY_STYLE_CONTENT_KEYS,
+    getArticleIndex: () => articleIndex,
+    setArticleIndex: (value) => {
+        articleIndex = value;
+    },
+    getCurrentArticleId: () => currentArticleId,
+    setCurrentArticleId: (value) => {
+        currentArticleId = value;
+    },
+    createBlankPersistedState,
+    getFallbackArticleTitle
+});
+const richTextEditor = window.RichTextEditor.createRichTextEditor({
+    getData: () => data,
+    sanitizeRichText,
+    normalizeColorValue,
+    inheritFontValue: INHERIT_FONT_VALUE,
+    getGlobalFontFamily: () => fontFamily,
+    getTextColor: () => textColor,
+    getPrimaryFontFamily,
+    resolveCardContentFontFamily,
+    afterChange: finishRichTextEditorChange
+});
 
 function getArticleStorageKey(articleId) {
-    return `${ARTICLE_STATE_KEY_PREFIX}${articleId}`;
+    return articleWorkspace.getArticleStorageKey(articleId);
 }
 
 function getFallbackArticleTitle(state = null) {
@@ -651,52 +923,8 @@ function getFallbackArticleTitle(state = null) {
     return yearTitle || "未命名文章";
 }
 
-function normalizeArticleMeta(meta) {
-    if (!meta || typeof meta !== "object" || typeof meta.id !== "string" || !meta.id) return null;
-
-    return {
-        id: meta.id,
-        title: typeof meta.title === "string" && meta.title.trim() ? meta.title.trim() : "未命名文章",
-        titleLocked: meta.titleLocked === true,
-        createdAt: Number.isFinite(meta.createdAt) ? meta.createdAt : Date.now(),
-        updatedAt: Number.isFinite(meta.updatedAt) ? meta.updatedAt : Date.now()
-    };
-}
-
-function loadArticleIndexFromStorage() {
-    try {
-        const raw = localStorage.getItem(ARTICLE_INDEX_STORAGE_KEY);
-        if (!raw) return { schemaVersion: ARTICLE_INDEX_SCHEMA_VERSION, articles: [] };
-
-        const parsed = JSON.parse(raw);
-        const articles = Array.isArray(parsed && parsed.articles)
-            ? parsed.articles.map(normalizeArticleMeta).filter(Boolean)
-            : [];
-
-        return {
-            schemaVersion: ARTICLE_INDEX_SCHEMA_VERSION,
-            articles
-        };
-    } catch (error) {
-        return { schemaVersion: ARTICLE_INDEX_SCHEMA_VERSION, articles: [] };
-    }
-}
-
-function saveArticleIndexToStorage() {
-    localStorage.setItem(ARTICLE_INDEX_STORAGE_KEY, JSON.stringify({
-        schemaVersion: ARTICLE_INDEX_SCHEMA_VERSION,
-        articles: articleIndex.articles
-    }));
-}
-
-function saveCurrentArticleIdToStorage() {
-    if (currentArticleId) {
-        localStorage.setItem(CURRENT_ARTICLE_ID_STORAGE_KEY, currentArticleId);
-    }
-}
-
 function getCurrentArticleMeta() {
-    return articleIndex.articles.find((article) => article.id === currentArticleId) || null;
+    return articleWorkspace.getCurrentArticleMeta();
 }
 
 function createBlankPersistedState() {
@@ -728,6 +956,7 @@ function createBlankPersistedState() {
         showTimeline: true,
         showMonthTitles: true,
         showMonthUnderlines: true,
+        showParagraphDividers: false,
         showSideHeader: true,
         showYearShadow: true,
         showBottomWatermark: true,
@@ -743,45 +972,7 @@ function createBlankPersistedState() {
 }
 
 function initializeArticleWorkspace() {
-    articleIndex = loadArticleIndexFromStorage();
-    currentArticleId = localStorage.getItem(CURRENT_ARTICLE_ID_STORAGE_KEY) || "";
-
-    if (!articleIndex.articles.length) {
-        const articleId = createArticleId();
-        const legacyRaw = localStorage.getItem(STORAGE_KEY);
-        let title = "未命名文章";
-
-        if (legacyRaw) {
-            try {
-                title = getFallbackArticleTitle(JSON.parse(legacyRaw));
-            } catch (error) {
-                title = "未命名文章";
-            }
-            localStorage.setItem(getArticleStorageKey(articleId), legacyRaw);
-        } else {
-            localStorage.setItem(getArticleStorageKey(articleId), JSON.stringify(createBlankPersistedState()));
-        }
-
-        const now = Date.now();
-        articleIndex.articles = [{
-            id: articleId,
-            title,
-            titleLocked: false,
-            createdAt: now,
-            updatedAt: now
-        }];
-        currentArticleId = articleId;
-        saveArticleIndexToStorage();
-        saveCurrentArticleIdToStorage();
-        return;
-    }
-
-    if (!articleIndex.articles.some((article) => article.id === currentArticleId)) {
-        currentArticleId = articleIndex.articles[0].id;
-        saveCurrentArticleIdToStorage();
-    }
-
-    saveArticleIndexToStorage();
+    articleWorkspace.initializeArticleWorkspace();
 }
 
 function resetRuntimeState() {
@@ -811,6 +1002,7 @@ function resetRuntimeState() {
     showTimeline = true;
     showMonthTitles = true;
     showMonthUnderlines = true;
+    showParagraphDividers = false;
     showSideHeader = true;
     showYearShadow = true;
     showBottomWatermark = true;
@@ -967,6 +1159,9 @@ function loadState() {
         if (typeof state.showMonthUnderlines === "boolean") {
             showMonthUnderlines = state.showMonthUnderlines;
         }
+        if (typeof state.showParagraphDividers === "boolean") {
+            showParagraphDividers = state.showParagraphDividers;
+        }
         if (typeof state.showSideHeader === "boolean") {
             showSideHeader = state.showSideHeader;
         }
@@ -1006,6 +1201,70 @@ function plainTextToRichText(value) {
     return escapeHtml(value).replace(/\n/g, "<br>");
 }
 
+function sanitizeRichTextFontSizeValue(value) {
+    const rawValue = String(value == null ? "" : value).trim();
+    return /^\d+(?:\.\d+)?(?:px|em|rem|%)$/.test(rawValue) ? rawValue : "";
+}
+
+function sanitizeRichTextFontWeightValue(value) {
+    const rawValue = String(value == null ? "" : value).trim().toLowerCase();
+    if (/^(normal|bold|bolder|lighter)$/.test(rawValue)) return rawValue;
+    return /^[1-9]00$/.test(rawValue) && parseInt(rawValue, 10) <= 900 ? rawValue : "";
+}
+
+function sanitizeRichTextFontStyleValue(value) {
+    const rawValue = String(value == null ? "" : value).trim().toLowerCase();
+    return /^(normal|italic|oblique)$/.test(rawValue) ? rawValue : "";
+}
+
+function sanitizeRichTextColorValue(value) {
+    const rawValue = String(value == null ? "" : value).trim();
+    if (/^#[0-9a-fA-F]{3,8}$/.test(rawValue)) return rawValue;
+    if (/^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/.test(rawValue)) return rawValue;
+    if (/^hsla?\(\s*\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/.test(rawValue)) return rawValue;
+    return /^[a-zA-Z]+$/.test(rawValue) ? rawValue : "";
+}
+
+function sanitizeRichTextDecorationLineValue(value) {
+    const rawValue = String(value == null ? "" : value).trim().toLowerCase();
+    if (!rawValue || rawValue === "none") return "";
+
+    const allowedValues = new Set(["underline", "line-through", "overline"]);
+    const values = [];
+    rawValue.split(/\s+/).forEach((item) => {
+        if (allowedValues.has(item) && !values.includes(item)) {
+            values.push(item);
+        }
+    });
+
+    return values.length ? values.join(" ") : "";
+}
+
+function sanitizeRichTextDecorationStyleValue(value) {
+    const rawValue = String(value == null ? "" : value).trim().toLowerCase();
+    return /^(solid|double|dotted|dashed|wavy)$/.test(rawValue) ? rawValue : "";
+}
+
+function sanitizeRichTextSpanStyle(sourceStyle, targetStyle) {
+    const fontFamilyValue = sanitizeFontFamilyValue(sourceStyle.fontFamily);
+    const fontSizeValue = sanitizeRichTextFontSizeValue(sourceStyle.fontSize);
+    const fontWeightValue = sanitizeRichTextFontWeightValue(sourceStyle.fontWeight);
+    const fontStyleValue = sanitizeRichTextFontStyleValue(sourceStyle.fontStyle);
+    const colorValue = sanitizeRichTextColorValue(sourceStyle.color);
+    const textDecorationLineValue = sanitizeRichTextDecorationLineValue(sourceStyle.textDecorationLine);
+    const textDecorationStyleValue = sanitizeRichTextDecorationStyleValue(sourceStyle.textDecorationStyle);
+    const textDecorationColorValue = sanitizeRichTextColorValue(sourceStyle.textDecorationColor);
+
+    if (fontFamilyValue) targetStyle.fontFamily = fontFamilyValue;
+    if (fontSizeValue) targetStyle.fontSize = fontSizeValue;
+    if (fontWeightValue) targetStyle.fontWeight = fontWeightValue;
+    if (fontStyleValue) targetStyle.fontStyle = fontStyleValue;
+    if (colorValue) targetStyle.color = colorValue;
+    if (textDecorationLineValue) targetStyle.textDecorationLine = textDecorationLineValue;
+    if (textDecorationStyleValue) targetStyle.textDecorationStyle = textDecorationStyleValue;
+    if (textDecorationColorValue) targetStyle.textDecorationColor = textDecorationColorValue;
+}
+
 function sanitizeRichText(value) {
     const template = document.createElement("template");
     template.innerHTML = String(value == null ? "" : value);
@@ -1020,10 +1279,12 @@ function sanitizeRichText(value) {
 
             if (child.tagName === "FONT") {
                 const fontFamilyValue = sanitizeFontFamilyValue(child.getAttribute("face"));
+                const colorValue = sanitizeRichTextColorValue(child.getAttribute("color"));
 
-                if (fontFamilyValue) {
+                if (fontFamilyValue || colorValue) {
                     const span = document.createElement("span");
-                    span.style.fontFamily = fontFamilyValue;
+                    if (fontFamilyValue) span.style.fontFamily = fontFamilyValue;
+                    if (colorValue) span.style.color = colorValue;
                     span.append(...Array.from(child.childNodes));
                     child.replaceWith(span);
                 } else {
@@ -1038,14 +1299,22 @@ function sanitizeRichText(value) {
             }
 
             if (child.tagName === "SPAN") {
-                const fontFamilyValue = sanitizeFontFamilyValue(child.style.fontFamily);
+                const sourceStyle = {
+                    fontFamily: child.style.fontFamily,
+                    fontSize: child.style.fontSize,
+                    fontWeight: child.style.fontWeight,
+                    fontStyle: child.style.fontStyle,
+                    color: child.style.color,
+                    textDecorationLine: child.style.textDecorationLine,
+                    textDecorationStyle: child.style.textDecorationStyle,
+                    textDecorationColor: child.style.textDecorationColor
+                };
                 Array.from(child.attributes).forEach((attribute) => {
                     child.removeAttribute(attribute.name);
                 });
+                sanitizeRichTextSpanStyle(sourceStyle, child.style);
 
-                if (fontFamilyValue) {
-                    child.style.fontFamily = fontFamilyValue;
-                } else {
+                if (!child.getAttribute("style")) {
                     child.replaceWith(...Array.from(child.childNodes));
                 }
                 return;
@@ -1339,6 +1608,7 @@ function buildPersistedState() {
         showTimeline,
         showMonthTitles,
         showMonthUnderlines,
+        showParagraphDividers,
         showSideHeader,
         showYearShadow,
         showBottomWatermark,
@@ -1354,56 +1624,7 @@ function buildPersistedState() {
 }
 
 function loadPersistedArticleState(articleId) {
-    try {
-        const raw = localStorage.getItem(getArticleStorageKey(articleId));
-        if (!raw) return null;
-
-        const state = JSON.parse(raw);
-        return state && typeof state === "object" ? state : null;
-    } catch (error) {
-        return null;
-    }
-}
-
-function copyArticleStyleState(sourceState, targetState) {
-    const nextState = targetState && typeof targetState === "object"
-        ? { ...targetState }
-        : createBlankPersistedState();
-    const preservedContent = {};
-
-    COPY_STYLE_CONTENT_KEYS.forEach((key) => {
-        if (Object.prototype.hasOwnProperty.call(nextState, key)) {
-            preservedContent[key] = nextState[key];
-        }
-    });
-
-    COPY_STYLE_STATE_KEYS.forEach((key) => {
-        if (Object.prototype.hasOwnProperty.call(sourceState, key)) {
-            nextState[key] = sourceState[key];
-        }
-    });
-
-    COPY_STYLE_CONTENT_KEYS.forEach((key) => {
-        if (Object.prototype.hasOwnProperty.call(preservedContent, key)) {
-            nextState[key] = preservedContent[key];
-        }
-    });
-
-    if (Array.isArray(targetState && targetState.data) && Array.isArray(sourceState.data)) {
-        nextState.data = targetState.data.map((targetItem, index) => {
-            const sourceItem = sourceState.data[index];
-            if (!targetItem || typeof targetItem !== "object" || !sourceItem || typeof sourceItem !== "object") {
-                return targetItem;
-            }
-
-            return typeof sourceItem.titleSize === "number"
-                ? { ...targetItem, titleSize: sourceItem.titleSize }
-                : targetItem;
-        });
-    }
-
-    nextState.schemaVersion = STATE_SCHEMA_VERSION;
-    return nextState;
+    return articleWorkspace.loadPersistedArticleState(articleId);
 }
 
 function getArticleStylePreviewText(state) {
@@ -1488,23 +1709,7 @@ function confirmCopyStyleToArticles() {
     }
 
     flushPendingInputAndState();
-    const sourceState = buildPersistedState();
-    const now = Date.now();
-    let copiedCount = 0;
-
-    targetIds.forEach((articleId) => {
-        const targetState = loadPersistedArticleState(articleId) || createBlankPersistedState();
-        const nextState = copyArticleStyleState(sourceState, targetState);
-        localStorage.setItem(getArticleStorageKey(articleId), JSON.stringify(nextState));
-
-        const article = articleIndex.articles.find((item) => item.id === articleId);
-        if (article) {
-            article.updatedAt = now;
-        }
-        copiedCount += 1;
-    });
-
-    saveArticleIndexToStorage();
+    const copiedCount = articleWorkspace.copyStyleToArticles(targetIds, buildPersistedState());
     renderArticleManager();
     closeCopyStyleModal();
     window.alert(`已复制样式到 ${copiedCount} 篇文章。`);
@@ -1523,18 +1728,6 @@ function renderArticleManager() {
     }
 }
 
-function updateCurrentArticleMetaFromState(state) {
-    const article = getCurrentArticleMeta();
-    if (!article) return;
-
-    if (!article.titleLocked) {
-        article.title = getFallbackArticleTitle(state);
-    }
-    article.updatedAt = Date.now();
-    saveArticleIndexToStorage();
-    renderArticleManager();
-}
-
 function commitStateSave() {
     if (isInitializing) return;
 
@@ -1542,9 +1735,9 @@ function commitStateSave() {
         const json = JSON.stringify(buildPersistedState());
         if (json === lastSavedStateJson) return;
 
-        localStorage.setItem(getArticleStorageKey(currentArticleId), json);
+        articleWorkspace.saveCurrentArticleState(JSON.parse(json));
         lastSavedStateJson = json;
-        updateCurrentArticleMetaFromState(JSON.parse(json));
+        renderArticleManager();
     } catch (error) {
         console.warn("State save failed", error);
         if (!stateSaveErrorShown) {
@@ -1594,7 +1787,7 @@ function flushPendingInputAndState() {
 
 function syncControlsFromRuntimeState() {
     setMobileEditorPanel(activeMobileEditorPanel);
-    updateMobileTypesetRefreshButton();
+    applyMobilePreviewModeState();
 
     if (typeof editorWidth === "number") {
         editor.style.width = editorWidth + "px";
@@ -1647,19 +1840,13 @@ async function loadCurrentArticleIntoEditor({ saveAfterHydrate = false } = {}) {
 }
 
 async function switchArticle(articleId) {
-    if (!articleId || articleId === currentArticleId) {
-        renderArticleManager();
-        return;
-    }
-
-    if (!articleIndex.articles.some((article) => article.id === articleId)) {
+    if (!articleWorkspace.canSwitchArticle(articleId)) {
         renderArticleManager();
         return;
     }
 
     flushPendingInputAndState();
-    currentArticleId = articleId;
-    saveCurrentArticleIdToStorage();
+    articleWorkspace.switchArticle(articleId);
     lastSavedStateJson = "";
 
     await loadCurrentArticleIntoEditor();
@@ -1678,22 +1865,7 @@ async function switchArticle(articleId) {
 
 async function createArticle() {
     flushPendingInputAndState();
-
-    const articleId = createArticleId();
-    const now = Date.now();
-    const state = createBlankPersistedState();
-
-    articleIndex.articles.unshift({
-        id: articleId,
-        title: "未命名文章",
-        titleLocked: false,
-        createdAt: now,
-        updatedAt: now
-    });
-    currentArticleId = articleId;
-    localStorage.setItem(getArticleStorageKey(articleId), JSON.stringify(state));
-    saveArticleIndexToStorage();
-    saveCurrentArticleIdToStorage();
+    articleWorkspace.createArticle();
     lastSavedStateJson = "";
 
     await loadCurrentArticleIntoEditor();
@@ -1709,21 +1881,8 @@ async function duplicateArticle() {
 
     const sourceState = buildPersistedState();
     const sourceMeta = getCurrentArticleMeta();
-    const articleId = createArticleId();
-    const now = Date.now();
     const title = `${(sourceMeta && sourceMeta.title) || getFallbackArticleTitle(sourceState)} 副本`;
-
-    articleIndex.articles.unshift({
-        id: articleId,
-        title,
-        titleLocked: true,
-        createdAt: now,
-        updatedAt: now
-    });
-    currentArticleId = articleId;
-    localStorage.setItem(getArticleStorageKey(articleId), JSON.stringify(sourceState));
-    saveArticleIndexToStorage();
-    saveCurrentArticleIdToStorage();
+    articleWorkspace.duplicateArticle(sourceState, title);
     lastSavedStateJson = "";
 
     await loadCurrentArticleIntoEditor();
@@ -1747,10 +1906,7 @@ function renameArticle() {
         return;
     }
 
-    article.title = normalizedTitle;
-    article.titleLocked = true;
-    article.updatedAt = Date.now();
-    saveArticleIndexToStorage();
+    articleWorkspace.renameCurrentArticle(normalizedTitle);
     renderArticleManager();
 }
 
@@ -1766,11 +1922,7 @@ async function deleteArticle() {
     const ok = window.confirm(`确定要删除“${article.title}”吗？`);
     if (!ok) return;
 
-    localStorage.removeItem(getArticleStorageKey(article.id));
-    articleIndex.articles = articleIndex.articles.filter((item) => item.id !== article.id);
-    currentArticleId = (articleIndex.articles[0] && articleIndex.articles[0].id) || "";
-    saveArticleIndexToStorage();
-    saveCurrentArticleIdToStorage();
+    articleWorkspace.deleteCurrentArticle();
     lastSavedStateJson = "";
 
     await loadCurrentArticleIntoEditor();
@@ -1978,23 +2130,88 @@ function resolveCardContentFontFamily(item) {
         : fontFamily;
 }
 
-function renderFontOptionElements(selectedValue, extraOptions = []) {
+function getFontOptionMatchValues(option) {
+    if (!option || !option.value) return [];
+    const includePrimaryValues = option.matchPrimaryValues !== false;
+    const explicitMatchValues = Array.isArray(option.matchValues) ? option.matchValues : [];
+
+    return [
+        option.value,
+        ...(includePrimaryValues ? [getPrimaryFontFamily(option.value)] : []),
+        ...explicitMatchValues.flatMap((value) => (
+            includePrimaryValues ? [value, getPrimaryFontFamily(value)] : [value]
+        ))
+    ].filter((value) => String(value || "").trim());
+}
+
+function isFontOptionValueMatch(value, option) {
+    const normalizedValue = normalizeFontFamilyForCompare(value);
+    if (!normalizedValue || !option) return false;
+
+    return getFontOptionMatchValues(option).some((matchValue) => (
+        normalizedValue === normalizeFontFamilyForCompare(matchValue)
+    ));
+}
+
+function hasFontOptionValueMatch(value, options) {
+    return options.some((option) => isFontOptionValueMatch(value, option));
+}
+
+function shouldDedupeSystemFontOption(systemOption, baseOptions) {
+    if (!systemOption || !systemOption.value) return true;
+
+    return baseOptions
+        .filter((option) => option && option.value && option.value !== INHERIT_FONT_VALUE && option.dedupeSystemFont !== false)
+        .some((option) => getFontOptionMatchValues(systemOption).some((value) => isFontOptionValueMatch(value, option)));
+}
+
+function getRenderableFontOptions(baseOptions = fontOptions) {
     const optionMap = new Map();
 
-    [...extraOptions, ...fontOptions].forEach((option) => {
+    [
+        ...baseOptions,
+        ...systemFontOptions.filter((option) => !shouldDedupeSystemFontOption(option, baseOptions))
+    ].forEach((option) => {
         if (!option || !option.value || optionMap.has(option.value)) return;
         optionMap.set(option.value, option);
     });
 
-    if (selectedValue && selectedValue !== INHERIT_FONT_VALUE && !optionMap.has(selectedValue)) {
-        optionMap.set(selectedValue, { label: "当前字体", value: selectedValue });
+    return Array.from(optionMap.values());
+}
+
+function getFontSelectOptionValue(selectedValue, baseOptions = fontOptions) {
+    const options = getRenderableFontOptions(baseOptions);
+    const exactMatch = options.find((option) => option.value === selectedValue);
+    if (exactMatch) return exactMatch.value;
+
+    const aliasMatch = options.find((option) => isFontOptionValueMatch(selectedValue, option));
+    return aliasMatch ? aliasMatch.value : selectedValue;
+}
+
+function getCurrentFontOptionLabel(value) {
+    const primaryFamily = getPrimaryFontFamily(value);
+    const localizedName = chineseFontLabels.get(normalizeFontFamilyName(primaryFamily));
+    return localizedName || "当前字体";
+}
+
+function renderFontOptionElements(selectedValue, baseOptions = fontOptions) {
+    const options = getRenderableFontOptions(baseOptions);
+    const selectedOptionValue = getFontSelectOptionValue(selectedValue, baseOptions);
+
+    if (
+        selectedValue
+        && selectedValue !== INHERIT_FONT_VALUE
+        && !hasFontOptionValueMatch(selectedValue, options)
+        && !options.some((option) => option.value === selectedValue)
+    ) {
+        options.push({ label: getCurrentFontOptionLabel(selectedValue), value: selectedValue });
     }
 
-    return Array.from(optionMap.values())
+    return options
         .map((option) => {
             const optionValue = escapeHtml(option.value);
             const fontStyle = option.value === INHERIT_FONT_VALUE ? fontFamily : option.value;
-            const selected = option.value === selectedValue ? " selected" : "";
+            const selected = option.value === selectedOptionValue ? " selected" : "";
 
             return `<option value="${optionValue}" style="font-family:${escapeHtml(fontStyle)};"${selected}>${escapeHtml(option.label)}</option>`;
         })
@@ -2038,21 +2255,22 @@ async function loadSystemFonts() {
             }
         });
 
-        const systemFontOptions = Array.from(fontGroups.entries())
+        const loadedSystemFontOptions = Array.from(fontGroups.entries())
             .map(([family, fullNames]) => ({
                 label: getFontDisplayLabel(family, fullNames),
                 value: quoteCssFontFamily(family)
             }))
             .sort((a, b) => a.label.localeCompare(b.label, "zh-Hans-CN"));
 
-        const fallbackValues = new Set(fallbackFontOptions.map((option) => option.value));
+        systemFontOptions = loadedSystemFontOptions;
+
         fontOptions = [
             ...fallbackFontOptions,
-            ...systemFontOptions.filter((option) => !fallbackValues.has(option.value))
+            ...systemFontOptions
         ];
 
         renderEditor();
-        setFontStatus(`已读取 ${systemFontOptions.length} 个本机字体。`);
+        setFontStatus(`已读取 ${loadedSystemFontOptions.length} 个本机字体。`);
     } catch (error) {
         const denied = error && (error.name === "NotAllowedError" || error.name === "SecurityError");
         setFontStatus(denied ? "没有获得本机字体权限，已保留默认字体列表。" : "读取本机字体失败，已保留默认字体列表。");
@@ -2073,7 +2291,14 @@ function renderPosterCards(poster, previewFontScale = getPreviewFontScale()) {
     if (!cards) return;
 
     cards.innerHTML = data
-        .map((item, index) => item.hidden ? "" : renderPreviewCard(item, index, previewFontScale))
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => !item.hidden)
+        .map(({ item, index }, visibleIndex) => {
+            const divider = showParagraphDividers && visibleIndex > 0
+                ? '<div class="paragraphDivider" aria-hidden="true"><span></span></div>'
+                : "";
+            return `${divider}${renderPreviewCard(item, index, previewFontScale)}`;
+        })
         .join("");
     bindCardImageLoadHandlers(cards);
 }
@@ -2224,12 +2449,13 @@ function applyPosterContainerState(poster) {
     poster.classList.toggle("noTimeline", !showTimeline);
     poster.classList.toggle("hideMonthTitles", !showMonthTitles);
     poster.classList.toggle("hideMonthUnderlines", !showMonthUnderlines);
+    poster.classList.toggle("showParagraphDividers", showParagraphDividers);
     poster.classList.toggle("hideSideHeader", !showSideHeader);
     poster.classList.toggle("hideYearShadow", !showYearShadow);
     poster.classList.toggle("subtitleVerticalLeft", subtitlePosition === "verticalLeft");
 }
 
-async function renderPreview({ updateControls = false, shouldSave = true, deferTypesetting = false, hideOverlayWhenReady = false, scheduleDeferredTypesetting = true, schedulePhonePreview = true } = {}) {
+async function renderPreview({ updateControls = false, shouldSave = true, deferTypesetting = false, hideOverlayWhenReady = false, scheduleDeferredTypesetting = true, schedulePhonePreview = true, markMobileTypesettingDirtyOnDefer = true } = {}) {
     const shouldManualMobileTypeset = isMobileViewport() && deferTypesetting;
 
     cancelDeferredPosterTypesetting();
@@ -2305,12 +2531,18 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
 
     if (deferTypesetting) {
         if (shouldManualMobileTypeset) {
-            markMobileTypesettingDirty();
+            markMobilePreviewTypesetStale();
+            if (markMobileTypesettingDirtyOnDefer) {
+                markMobileTypesettingDirty();
+            }
         } else if (scheduleDeferredTypesetting) {
             scheduleDeferredPosterTypesetting({ shouldSave });
         }
     } else {
         applyPosterTypesetting();
+        if (isMobileViewport()) {
+            markMobilePreviewTypesetReady();
+        }
         clearMobileTypesettingDirty();
     }
 
@@ -2388,7 +2620,16 @@ function scheduleEditorRender() {
 
 function render({ deferEditor = false, previewOptions = {} } = {}) {
     flushPendingMobileTextInputs({ schedulePreview: false });
-    renderPreview(previewOptions);
+    const nextPreviewOptions = { ...previewOptions };
+
+    if (isMobileViewport() && !mobilePosterPreviewMode && nextPreviewOptions.deferTypesetting !== false) {
+        nextPreviewOptions.deferTypesetting = true;
+        if (nextPreviewOptions.scheduleDeferredTypesetting !== true) {
+            nextPreviewOptions.scheduleDeferredTypesetting = false;
+        }
+    }
+
+    renderPreview(nextPreviewOptions);
 
     if (deferEditor) {
         scheduleEditorRender();
@@ -2404,7 +2645,7 @@ function render({ deferEditor = false, previewOptions = {} } = {}) {
 }
 
 function renderEditor() {
-    richTextSelections.clear();
+    richTextEditor.clearSelections();
     renderHeadlineFontControls();
     syncCardSortModeButton();
 
@@ -2417,12 +2658,8 @@ function renderEditor() {
         const itemParagraphSpacing = getItemParagraphSpacing(item);
         const titleFontFamily = resolveCardTitleFontFamily(item);
         const contentFontToolbarValue = item.contentFontToolbarValue || item.contentFontFamily || INHERIT_FONT_VALUE;
-        const titleFontOptions = renderFontOptionElements(titleFontFamily, [
-            { label: "默认标题字体", value: CARD_TITLE_DEFAULT_FONT_FAMILY }
-        ]);
-        const contentFontOptions = renderFontOptionElements(contentFontToolbarValue, [
-            { label: "默认内容字体", value: INHERIT_FONT_VALUE }
-        ]);
+        const titleFontOptions = renderFontOptionElements(titleFontFamily, cardTitleFontOptions);
+        const contentFontOptions = renderFontOptionElements(contentFontToolbarValue, defaultPosterFontOptions);
         const cardBodyHtml = isImageCard(item)
             ? renderImageCardEditorBody(item, index)
             : renderTextCardEditorBody(item, index, textHtml, contentFontOptions, contentFontToolbarValue);
@@ -2492,21 +2729,21 @@ function renderHeadlineFontControls() {
             inputId: "yearInput",
             selectedValue: yearFontFamily,
             resolvedFontFamily: resolveYearFontFamily(),
-            defaultLabel: "默认标题字体"
+            fontOptions: defaultPosterFontOptions
         },
         {
             selectId: "subtitleFontSelect",
             inputId: "subtitleInput",
             selectedValue: subtitleFontFamily,
             resolvedFontFamily: resolveSubtitleFontFamily(),
-            defaultLabel: "默认副标题字体"
+            fontOptions: defaultPosterFontOptions
         },
         {
             selectId: "sideFontSelect",
             inputId: "sideInput",
             selectedValue: sideFontFamily,
             resolvedFontFamily: resolveSideFontFamily(),
-            defaultLabel: "默认竖排标题字体"
+            fontOptions: defaultPosterFontOptions
         }
     ];
 
@@ -2515,10 +2752,8 @@ function renderHeadlineFontControls() {
         const inputEl = document.getElementById(control.inputId);
 
         if (selectEl) {
-            selectEl.innerHTML = renderFontOptionElements(control.selectedValue, [
-                { label: control.defaultLabel, value: INHERIT_FONT_VALUE }
-            ]);
-            selectEl.value = control.selectedValue;
+            selectEl.innerHTML = renderFontOptionElements(control.selectedValue, control.fontOptions);
+            selectEl.value = getFontSelectOptionValue(control.selectedValue, control.fontOptions);
             selectEl.style.fontFamily = control.resolvedFontFamily;
         }
 
@@ -2655,6 +2890,11 @@ function updateTimelineButtons() {
     const underlineButton = document.getElementById("underlineToggleBtn");
     if (underlineButton) {
         underlineButton.innerText = showMonthUnderlines ? "隐藏段落标题横线" : "显示段落标题横线";
+    }
+
+    const dividerButton = document.getElementById("paragraphDividerToggleBtn");
+    if (dividerButton) {
+        dividerButton.innerText = showParagraphDividers ? "隐藏段落分割线" : "显示段落分割线";
     }
 
     const sideHeaderButton = document.getElementById("sideHeaderToggleBtn");
@@ -2898,81 +3138,62 @@ function normalizeRichTextEditorPlaceholder(element) {
 }
 
 function getRichTextEditor(index) {
-    return document.getElementById(`contentEditor-${index}`);
+    return richTextEditor.getRichTextEditor(index);
 }
 
 function isRangeInsideElement(range, element) {
-    if (!range || !element) return false;
-
-    const startNode = range.startContainer.nodeType === Node.TEXT_NODE
-        ? range.startContainer.parentNode
-        : range.startContainer;
-    const endNode = range.endContainer.nodeType === Node.TEXT_NODE
-        ? range.endContainer.parentNode
-        : range.endContainer;
-
-    return (element.contains(startNode) || element === startNode)
-        && (element.contains(endNode) || element === endNode);
+    return richTextEditor.isRangeInsideElement(range, element);
 }
 
 function saveRichTextSelection(index) {
-    const editorEl = getRichTextEditor(index);
-    const selection = window.getSelection();
-
-    if (!editorEl || !selection || selection.rangeCount === 0) return;
-
-    const range = selection.getRangeAt(0);
-    const commonAncestor = range.commonAncestorContainer;
-    const selectionNode = commonAncestor.nodeType === Node.TEXT_NODE
-        ? commonAncestor.parentNode
-        : commonAncestor;
-
-    if (editorEl.contains(selectionNode) || editorEl === selectionNode) {
-        richTextSelections.set(index, range.cloneRange());
-    }
+    richTextEditor.saveRichTextSelection(index);
 }
 
 function restoreRichTextSelection(index) {
-    const range = richTextSelections.get(index);
-    const selection = window.getSelection();
-    const editorEl = getRichTextEditor(index);
-
-    if (!range || !selection || !isRangeInsideElement(range, editorEl)) return false;
-
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return true;
+    return richTextEditor.restoreRichTextSelection(index);
 }
 
 function getSavedRichTextRange(index) {
-    const range = richTextSelections.get(index);
-    const editorEl = getRichTextEditor(index);
-
-    return isRangeInsideElement(range, editorEl) ? range : null;
+    return richTextEditor.getSavedRichTextRange(index);
 }
 
 function stripRichTextFontSpans(element) {
-    if (!element) return;
-
-    Array.from(element.querySelectorAll("span")).forEach((span) => {
-        if (span.style.fontFamily) {
-            span.replaceWith(...Array.from(span.childNodes));
-        }
-    });
+    richTextEditor.stripRichTextFontSpans(element);
 }
 
-function formatCardText(index, command) {
-    const editorEl = getRichTextEditor(index);
-    if (!editorEl) return;
+function clearRichTextColorStyles(element) {
+    richTextEditor.clearRichTextColorStyles(element);
+}
 
-    editorEl.focus();
-    restoreRichTextSelection(index);
-    document.execCommand(command, false, null);
+function unwrapRichTextSpanIfEmpty(span) {
+    richTextEditor.unwrapRichTextSpanIfEmpty(span);
+}
 
-    data[index].text = sanitizeRichText(editorEl.innerHTML);
-    editorEl.innerHTML = data[index].text;
-    saveRichTextSelection(index);
+function unwrapEmptyRichTextSpans(element) {
+    richTextEditor.unwrapEmptyRichTextSpans(element);
+}
 
+function wrapRichTextRangeTextNodes(range, editorEl, styleProperty, styleValue) {
+    return richTextEditor.wrapRichTextRangeTextNodes(range, editorEl, styleProperty, styleValue);
+}
+
+function restoreRichTextSelectionFromRange(range) {
+    return richTextEditor.restoreRichTextSelectionFromRange(range);
+}
+
+function splitRichTextRangeBoundaries(range) {
+    return richTextEditor.splitRichTextRangeBoundaries(range);
+}
+
+function getRichTextRangeTextNodes(range, root) {
+    return richTextEditor.getRichTextRangeTextNodes(range, root);
+}
+
+function clearRichTextRangeColor(range, editorEl) {
+    return richTextEditor.clearRichTextRangeColor(range, editorEl);
+}
+
+function finishRichTextEditorChange(index) {
     if (isMobileViewport()) {
         pendingCardPreviewIndexes.add(index);
         pendingDeferredCardPreviewIndexes.add(index);
@@ -2984,118 +3205,163 @@ function formatCardText(index, command) {
     renderPreview();
 }
 
+function formatCardText(index, command) {
+    richTextEditor.formatCardText(index, command);
+}
+
 function applyRichTextFont(index, value, selectEl = null) {
+    richTextEditor.applyRichTextFont(index, value, selectEl);
+}
+
+function applyRichTextSelectedColor(index, range, value) {
+    return richTextEditor.applyRichTextSelectedColor(index, range, value);
+}
+
+function applyRichTextParagraphColor(index, value) {
+    return richTextEditor.applyRichTextParagraphColor(index, value);
+}
+
+function getRichTextColorPickerValue() {
+    if (richTextColorPickerContext && richTextColorPickerContext.pendingColor) {
+        return richTextColorPickerContext.pendingColor;
+    }
+
+    const index = richTextColorPickerContext ? richTextColorPickerContext.index : -1;
+    return data[index] && data[index].contentColor ? data[index].contentColor : textColor;
+}
+
+function updateRichTextColorButton(button, color) {
+    if (!button) return;
+
+    const selectedColor = normalizeColorValue(color) || textColor;
+    button.style.setProperty("--rich-text-color", selectedColor);
+}
+
+function previewRichTextColorPicker(value) {
+    const selectedColor = normalizeColorValue(value);
+    if (!selectedColor || !richTextColorPickerContext) return;
+
+    richTextColorPickerContext.pendingColor = selectedColor;
+    updateRichTextColorButton(richTextColorPickerContext.button, selectedColor);
+}
+
+function cancelRichTextColorPicker() {
+    if (!richTextColorPickerContext) return;
+
+    updateRichTextColorButton(
+        richTextColorPickerContext.button,
+        richTextColorPickerContext.originalButtonColor || getRichTextColorPickerValue()
+    );
+    richTextColorPickerContext = null;
+}
+
+function confirmRichTextColorPicker() {
+    if (!richTextColorPickerContext) return;
+
+    const context = richTextColorPickerContext;
+    const selectedColor = normalizeColorValue(context.pendingColor);
+    richTextColorPickerContext = null;
+
+    if (!selectedColor || !data[context.index]) return;
+
+    if (context.hasSelectedText && context.range) {
+        applyRichTextSelectedColor(context.index, context.range, selectedColor);
+        return;
+    }
+
+    applyRichTextParagraphColor(context.index, selectedColor);
+}
+
+function resetRichTextColorFromPicker() {
+    if (!richTextColorPickerContext) return;
+
+    const context = richTextColorPickerContext;
+    richTextColorPickerContext = null;
+    closeCustomColorPanels();
+
+    resetRichTextColorWithContext(context);
+}
+
+function getRichTextColorPanelPosition(button, panel) {
+    if (!button || !panel || !button.getBoundingClientRect) return null;
+
+    const rect = button.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect ? panel.getBoundingClientRect() : null;
+    const panelWidth = (panelRect && panelRect.width) || panel.offsetWidth || 230;
+    const viewportWidth = document.documentElement.clientWidth || window.innerWidth || panelWidth;
+    const anchorX = rect.left + rect.width / 2;
+    const left = Math.max(8, Math.min(anchorX - panelWidth / 2, viewportWidth - panelWidth - 8));
+
+    return {
+        left,
+        top: Math.max(8, rect.bottom + 8),
+        anchorX: Math.max(13, Math.min(anchorX - left, panelWidth - 13))
+    };
+}
+
+function positionRichTextColorPanel(panel, button) {
+    const position = getRichTextColorPanelPosition(button, panel);
+    if (!panel || !position) return;
+
+    panel.classList.add("richTextFloatingColorPanel");
+    panel.classList.remove("mobileCustomColorModal");
+    panel.style.left = `${position.left}px`;
+    panel.style.top = `${position.top}px`;
+    panel.style.setProperty("--rich-text-panel-anchor-x", `${position.anchorX}px`);
+}
+
+function scheduleRichTextColorPanelPosition(panel, button) {
+    positionRichTextColorPanel(panel, button);
+
+    requestAnimationFrame(() => {
+        if (!panel || panel.hidden) return;
+
+        positionRichTextColorPanel(panel, button);
+    });
+}
+
+function openRichTextColorPicker(index, button = null) {
     const editorEl = getRichTextEditor(index);
     if (!editorEl || !data[index]) return;
 
-    const selectedValue = value || INHERIT_FONT_VALUE;
-    const nextFontFamily = selectedValue !== INHERIT_FONT_VALUE ? selectedValue : fontFamily;
     const savedRange = getSavedRichTextRange(index);
-    const hasSelectedText = Boolean(savedRange && !savedRange.collapsed && String(savedRange).length > 0);
+    const selectedColor = normalizeColorValue(data[index].contentColor) || textColor;
 
-    editorEl.focus();
+    richTextColorPickerContext = {
+        index,
+        range: savedRange ? savedRange.cloneRange() : null,
+        hasSelectedText: Boolean(savedRange && !savedRange.collapsed && String(savedRange).length > 0),
+        button,
+        originalButtonColor: selectedColor,
+        pendingColor: selectedColor
+    };
 
-    if (hasSelectedText) {
-        restoreRichTextSelection(index);
-        document.execCommand("fontName", false, getPrimaryFontFamily(nextFontFamily) || nextFontFamily);
-    } else {
-        data[index].contentFontFamily = selectedValue;
-        stripRichTextFontSpans(editorEl);
-        editorEl.style.fontFamily = resolveCardContentFontFamily(data[index]);
-    }
+    openCustomColorPanel("richText");
+    scheduleRichTextColorPanelPosition(colorPickerControls.richText.panel, button);
+}
 
-    data[index].contentFontToolbarValue = selectedValue;
-    data[index].text = sanitizeRichText(editorEl.innerHTML);
-    editorEl.innerHTML = data[index].text;
-    saveRichTextSelection(index);
+function resetRichTextColor(index) {
+    richTextEditor.resetRichTextColor(index);
+}
 
-    if (selectEl) {
-        selectEl.value = selectedValue;
-        selectEl.style.fontFamily = selectedValue === INHERIT_FONT_VALUE ? resolveCardContentFontFamily(data[index]) : selectedValue;
-    }
-
-    renderPreview();
+function resetRichTextColorWithContext(context) {
+    richTextEditor.resetRichTextColorWithContext(context);
 }
 
 function createPlainTextPasteFragment(text, doc = document) {
-    const fragment = doc.createDocumentFragment();
-    const normalizedText = String(text == null ? "" : text)
-        .replace(/\r\n?/g, "\n")
-        .replace(/\u00a0/g, " ")
-        .replace(/[\u200B-\u200D\uFEFF]/g, "");
-
-    if (!normalizedText.includes("\n")) {
-        if (normalizedText) {
-            fragment.appendChild(doc.createTextNode(normalizedText));
-        }
-        return fragment;
-    }
-
-    normalizedText
-        .split("\n")
-        .forEach((line) => {
-            const paragraph = doc.createElement("div");
-            if (line) {
-                paragraph.appendChild(doc.createTextNode(line));
-            } else {
-                paragraph.appendChild(doc.createElement("br"));
-            }
-            fragment.appendChild(paragraph);
-        });
-
-    return fragment;
+    return richTextEditor.createPlainTextPasteFragment(text, doc);
 }
 
 function dispatchRichTextInput(editorEl, text) {
-    const event = typeof InputEvent === "function"
-        ? new InputEvent("input", {
-            bubbles: true,
-            inputType: "insertText",
-            data: text
-        })
-        : new Event("input", { bubbles: true });
-
-    editorEl.dispatchEvent(event);
+    richTextEditor.dispatchRichTextInput(editorEl, text);
 }
 
 function insertPlainTextIntoEditor(editorEl, text) {
-    if (!editorEl) return false;
-
-    const selection = window.getSelection();
-    let range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-
-    if (!isRangeInsideElement(range, editorEl)) {
-        range = document.createRange();
-        range.selectNodeContents(editorEl);
-        range.collapse(false);
-    }
-
-    const marker = document.createTextNode("");
-    const fragment = createPlainTextPasteFragment(text);
-    fragment.appendChild(marker);
-
-    range.deleteContents();
-    range.insertNode(fragment);
-    range.setStartBefore(marker);
-    range.collapse(true);
-    marker.remove();
-
-    if (selection) {
-        selection.removeAllRanges();
-        selection.addRange(range);
-    }
-
-    return true;
+    return richTextEditor.insertPlainTextIntoEditor(editorEl, text);
 }
 
 function pastePlainText(event) {
-    event.preventDefault();
-
-    const editorEl = event.currentTarget;
-    const text = event.clipboardData ? event.clipboardData.getData("text/plain") : "";
-    if (insertPlainTextIntoEditor(editorEl, text)) {
-        dispatchRichTextInput(editorEl, text);
-    }
+    richTextEditor.pastePlainText(event);
 }
 
 function updateCardSizeValue(index, type, value) {
@@ -3163,6 +3429,10 @@ function getCustomPickerConfig(target) {
     return colorPickerControls[target] || null;
 }
 
+function getCustomPickerEventTarget(target) {
+    return target === "text" && activeCustomColorTarget === "richText" ? "richText" : target;
+}
+
 function updateCustomPickerUi(target, { preview = true } = {}) {
     const config = getCustomPickerConfig(target);
     const state = customColorPickerState[target];
@@ -3222,13 +3492,39 @@ function syncCustomPickerFromColor(target, color) {
     setCustomPickerFromColor(target, color, { preview: false });
 }
 
+function moveRichTextColorPanelToBody(panel) {
+    if (!panel || panel.parentNode === document.body) return;
+
+    richTextColorPanelHome = {
+        parent: panel.parentNode,
+        nextSibling: panel.nextSibling
+    };
+    document.body.appendChild(panel);
+}
+
+function restoreRichTextColorPanelHome(panel) {
+    if (!panel || !richTextColorPanelHome || !richTextColorPanelHome.parent) return;
+
+    richTextColorPanelHome.parent.insertBefore(panel, richTextColorPanelHome.nextSibling);
+    richTextColorPanelHome = null;
+}
+
 function closeCustomColorPanels() {
     Object.values(colorPickerControls).forEach((control) => {
         if (!control.panel) return;
 
         control.panel.hidden = true;
         control.panel.classList.remove("mobileCustomColorModal");
+        control.panel.classList.remove("richTextFloatingColorPanel");
+        control.panel.classList.remove("richTextColorMode");
+        control.panel.style.left = "";
+        control.panel.style.top = "";
+        restoreRichTextColorPanelHome(control.panel);
     });
+
+    if (textColorResetGlobalBtn) {
+        textColorResetGlobalBtn.hidden = true;
+    }
 
     if (customColorModalBackdrop) {
         customColorModalBackdrop.hidden = true;
@@ -3247,11 +3543,18 @@ function openCustomColorPanel(target) {
     state.originalColor = config.getValue();
     setCustomPickerFromColor(target, state.originalColor, { preview: false });
     if (config.panel) {
-        config.panel.classList.toggle("mobileCustomColorModal", isMobileViewport());
+        if (target === "richText") {
+            moveRichTextColorPanelToBody(config.panel);
+        }
+        config.panel.classList.toggle("mobileCustomColorModal", target !== "richText" && isMobileViewport());
+        config.panel.classList.toggle("richTextColorMode", target === "richText");
         config.panel.hidden = false;
     }
+    if (textColorResetGlobalBtn) {
+        textColorResetGlobalBtn.hidden = target !== "richText";
+    }
     if (customColorModalBackdrop) {
-        customColorModalBackdrop.hidden = !isMobileViewport();
+        customColorModalBackdrop.hidden = target === "richText" || !isMobileViewport();
     }
     activeCustomColorTarget = target;
 }
@@ -3260,6 +3563,12 @@ function cancelCustomColor(target) {
     const config = getCustomPickerConfig(target);
     const state = customColorPickerState[target];
     if (!config || !state) return;
+
+    if (typeof config.cancel === "function") {
+        config.cancel(state.originalColor);
+        closeCustomColorPanels();
+        return;
+    }
 
     config.preview(state.originalColor);
     closeCustomColorPanels();
@@ -3399,9 +3708,21 @@ function changeCardTitleFont(index, value, selectEl = null) {
 function applyTextColorToElementTree(element) {
     if (!element) return;
 
-    element.style.color = textColor;
-    element.querySelectorAll(".typesetLine, .typesetLineInner, .typesetToken, .verticalTextLine, .verticalTextChar").forEach((child) => {
-        child.style.color = textColor;
+    const card = element.closest ? element.closest(".card") : null;
+    const cardIndex = card ? Number(card.dataset.cardIndex) : -1;
+    const contentColor = element.classList && element.classList.contains("info") && data[cardIndex]
+        ? normalizeColorValue(data[cardIndex].contentColor)
+        : "";
+    const inheritedColor = contentColor || textColor;
+
+    element.style.color = inheritedColor;
+    element.querySelectorAll(".typesetLine, .typesetLineInner, .verticalTextLine, .verticalTextChar").forEach((child) => {
+        child.style.color = inheritedColor;
+    });
+    element.querySelectorAll(".typesetToken").forEach((child) => {
+        if (!child.dataset.richTextExplicitColor) {
+            child.style.color = inheritedColor;
+        }
     });
 }
 
@@ -3430,11 +3751,39 @@ function changeTextColor(value) {
 }
 
 function confirmTextCustomColor() {
-    confirmCustomColor("text");
+    confirmCustomColor(getCustomPickerEventTarget("text"));
 }
 
 function cancelTextCustomColor() {
-    cancelCustomColor("text");
+    cancelCustomColor(getCustomPickerEventTarget("text"));
+}
+
+function getMobileInputDecimalPlaces(value) {
+    const text = String(value || "");
+    const dotIndex = text.indexOf(".");
+    return dotIndex >= 0 ? text.length - dotIndex - 1 : 0;
+}
+
+function adjustMobileNumberInput(inputId, direction) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+
+    const step = Number(input.dataset.mobileStep || input.step || 1);
+    if (!Number.isFinite(step) || step <= 0) return;
+
+    const min = input.min === "" ? -Infinity : Number(input.min);
+    const max = input.max === "" ? Infinity : Number(input.max);
+    const currentValue = Number(input.value);
+    const fallbackValue = Number.isFinite(min) ? min : 0;
+    const decimalPlaces = getMobileInputDecimalPlaces(input.dataset.mobileStep || input.step || step);
+    const nextDirection = direction < 0 ? -1 : 1;
+    let nextValue = (Number.isFinite(currentValue) ? currentValue : fallbackValue) + step * nextDirection;
+
+    if (Number.isFinite(min)) nextValue = Math.max(nextValue, min);
+    if (Number.isFinite(max)) nextValue = Math.min(nextValue, max);
+
+    input.value = decimalPlaces > 0 ? nextValue.toFixed(decimalPlaces) : String(Math.round(nextValue));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function changeLineSpacing(index, value) {
@@ -3511,6 +3860,12 @@ function toggleMonthTitles() {
 
 function toggleMonthUnderlines() {
     showMonthUnderlines = !showMonthUnderlines;
+    updateTimelineButtons();
+    scheduleMobileFastPreviewRender();
+}
+
+function toggleParagraphDividers() {
+    showParagraphDividers = !showParagraphDividers;
     updateTimelineButtons();
     scheduleMobileFastPreviewRender();
 }
@@ -3593,12 +3948,12 @@ function bindCustomColorField(target) {
         if (config.field.setPointerCapture) {
             config.field.setPointerCapture(event.pointerId);
         }
-        updateCustomPickerFromFieldEvent(target, event);
+        updateCustomPickerFromFieldEvent(getCustomPickerEventTarget(target), event);
     });
 
     config.field.addEventListener("pointermove", (event) => {
         if (event.buttons !== 1 && event.pressure === 0) return;
-        updateCustomPickerFromFieldEvent(target, event);
+        updateCustomPickerFromFieldEvent(getCustomPickerEventTarget(target), event);
     });
 }
 
@@ -3610,14 +3965,18 @@ function bindCustomColorPanel(target) {
     bindCustomColorField(target);
 
     if (config.hue) config.hue.addEventListener("input", () => {
-        state.hue = clampNumber(config.hue.value, 0, 360);
-        updateCustomPickerUi(target);
+        const eventTarget = getCustomPickerEventTarget(target);
+        const eventState = customColorPickerState[eventTarget];
+        if (!eventState) return;
+
+        eventState.hue = clampNumber(config.hue.value, 0, 360);
+        updateCustomPickerUi(eventTarget);
     });
 
     if (config.hex) config.hex.addEventListener("input", () => {
         const value = config.hex.value.trim();
         if (/^#[0-9a-fA-F]{6}$/.test(value)) {
-            setCustomPickerFromColor(target, value);
+            setCustomPickerFromColor(getCustomPickerEventTarget(target), value);
         }
     });
 
@@ -3629,7 +3988,7 @@ function bindCustomColorPanel(target) {
                 g: config.green ? config.green.value : undefined,
                 b: config.blue ? config.blue.value : undefined
             });
-            setCustomPickerFromColor(target, hex);
+            setCustomPickerFromColor(getCustomPickerEventTarget(target), hex);
         });
     });
 
@@ -3642,11 +4001,34 @@ function syncCustomColorModalMode() {
     const config = getCustomPickerConfig(activeCustomColorTarget);
     if (!config || !config.panel || config.panel.hidden) return;
 
+    if (activeCustomColorTarget === "richText") {
+        config.panel.classList.remove("mobileCustomColorModal");
+        scheduleRichTextColorPanelPosition(config.panel, richTextColorPickerContext && richTextColorPickerContext.button);
+        if (customColorModalBackdrop) {
+            customColorModalBackdrop.hidden = true;
+        }
+        return;
+    }
+
     const mobile = isMobileViewport();
     config.panel.classList.toggle("mobileCustomColorModal", mobile);
     if (customColorModalBackdrop) {
         customColorModalBackdrop.hidden = !mobile;
     }
+}
+
+function handleCustomColorOutsidePointerDown(event) {
+    if (!activeCustomColorTarget) return;
+
+    const config = getCustomPickerConfig(activeCustomColorTarget);
+    const panel = config ? config.panel : null;
+    const target = event.target;
+
+    if (!panel || panel.hidden) return;
+    if (panel.contains(target)) return;
+    if (target && target.closest && target.closest(".richTextColorButton")) return;
+
+    cancelCustomColor(activeCustomColorTarget);
 }
 
 function addTextCard() {
@@ -3657,10 +4039,6 @@ function addTextCard() {
 function addImageCard() {
     data.push(createImageCard());
     renderLayoutChangePreview();
-}
-
-function addCard() {
-    addTextCard();
 }
 
 function openCardImagePicker(index) {
@@ -4443,6 +4821,7 @@ let dragging = false;
 let posterWidthRerenderFrame = null;
 let viewportResizeRenderFrame = null;
 let viewportResizeCompletionTimer = null;
+let lastResponsiveViewportWidth = Math.round(getViewportSize().width);
 
 function getCurrentEditorWidth() {
     const width = parseInt((editor && editor.style.width) || "", 10);
@@ -4497,6 +4876,680 @@ function applyEditorCollapsedState({ shouldSave = false, shouldRerender = true }
     if (shouldSave) {
         saveState();
     }
+}
+
+function applyMobilePreviewModeState() {
+    if (!isMobileViewport()) {
+        mobilePosterPreviewMode = false;
+    }
+
+    document.body.classList.toggle("mobilePosterPreviewMode", mobilePosterPreviewMode && isMobileViewport());
+    updateMobileTypesetRefreshButton();
+}
+
+function getPreviewScrollRatio() {
+    const preview = document.getElementById("preview");
+    if (!preview) return 0;
+
+    const maxScroll = preview.scrollHeight - preview.clientHeight;
+    if (maxScroll <= 0) return 0;
+
+    return Math.min(1, Math.max(0, preview.scrollTop / maxScroll));
+}
+
+function restorePreviewScrollRatio(ratio) {
+    const preview = document.getElementById("preview");
+    if (!preview) return;
+
+    const clampedRatio = Math.min(1, Math.max(0, Number(ratio) || 0));
+
+    requestAnimationFrame(() => {
+        const maxScroll = preview.scrollHeight - preview.clientHeight;
+        preview.scrollTop = maxScroll > 0 ? maxScroll * clampedRatio : 0;
+        syncPhoneScroll();
+    });
+}
+
+function getRangeFromPoint(x, y) {
+    if (document.caretRangeFromPoint) {
+        return document.caretRangeFromPoint(x, y);
+    }
+
+    if (document.caretPositionFromPoint) {
+        const position = document.caretPositionFromPoint(x, y);
+        if (!position) return null;
+
+        const range = document.createRange();
+        range.setStart(position.offsetNode, position.offset);
+        range.collapse(true);
+        return range;
+    }
+
+    return null;
+}
+
+function getMobileScrollAnchorTarget(element) {
+    if (!element || !element.closest) return null;
+
+    return element.closest("#cards .cardTitle, #cards .info > div, #cards .info > p, #year, #subtitle, #side");
+}
+
+function getTextOffsetWithinElement(root, targetNode, targetOffset) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let offset = 0;
+    let node = walker.nextNode();
+
+    while (node) {
+        if (node === targetNode) {
+            return offset + Math.min(targetOffset, node.textContent.length);
+        }
+
+        offset += node.textContent.length;
+        node = walker.nextNode();
+    }
+
+    return 0;
+}
+
+function getTextNodeAtOffset(root, targetOffset) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let remaining = Math.max(0, targetOffset);
+    let fallback = null;
+    let node = walker.nextNode();
+
+    while (node) {
+        fallback = node;
+        const length = node.textContent.length;
+        if (remaining <= length) {
+            return {
+                node,
+                offset: Math.min(remaining, length)
+            };
+        }
+
+        remaining -= length;
+        node = walker.nextNode();
+    }
+
+    return fallback ? { node: fallback, offset: fallback.textContent.length } : null;
+}
+
+function getRangeRectNearTextOffset(root, offset) {
+    const position = getTextNodeAtOffset(root, offset);
+    if (!position || !position.node) return null;
+
+    const length = position.node.textContent.length;
+    const start = Math.max(0, Math.min(position.offset, Math.max(length - 1, 0)));
+    const end = Math.min(length, start + 1);
+    const range = document.createRange();
+    range.setStart(position.node, start);
+    range.setEnd(position.node, end);
+
+    const rect = Array.from(range.getClientRects()).find((item) => item.width || item.height);
+    return rect || null;
+}
+
+function getMobileScrollAnchorRole(target) {
+    if (!target) return "";
+    if (target.id) return `id:${target.id}`;
+    if (target.classList.contains("cardTitle")) return "cardTitle";
+    if (target.closest(".info")) return "cardBody";
+    return "";
+}
+
+function findMobileScrollAnchorTarget(anchor) {
+    if (!anchor) return null;
+
+    if (anchor.role && anchor.role.indexOf("id:") === 0) {
+        return document.getElementById(anchor.role.slice(3));
+    }
+
+    const card = document.querySelector(`#cards .card[data-card-index="${anchor.cardIndex}"]`);
+    if (!card) return null;
+
+    if (anchor.role === "cardTitle") {
+        return card.querySelector(".cardTitle");
+    }
+
+    if (anchor.role === "cardBody") {
+        const candidates = Array.from(card.querySelectorAll(".info > div, .info > p"));
+        return candidates[anchor.blockIndex] || candidates.find((element) => element.textContent.trim()) || null;
+    }
+
+    return null;
+}
+
+function captureMobilePreviewScrollAnchor() {
+    const preview = document.getElementById("preview");
+    if (!preview) return null;
+
+    const previewRect = preview.getBoundingClientRect();
+    const toolbar = document.getElementById("mobilePreviewToolbar");
+    const toolbarRect = toolbar ? toolbar.getBoundingClientRect() : null;
+    const anchorTop = Math.max(
+        previewRect.top,
+        toolbarRect && toolbarRect.bottom > previewRect.top ? toolbarRect.bottom : previewRect.top
+    );
+    const yValues = [anchorTop + 8, anchorTop + 20, anchorTop + 36];
+    const xValues = [
+        previewRect.left + 36,
+        previewRect.left + previewRect.width * 0.5,
+        previewRect.right - 36
+    ];
+    const visibleTypesetLine = Array.from(preview.querySelectorAll("#cards .typesetLine"))
+        .map((line) => ({ line, rect: line.getBoundingClientRect() }))
+        .filter(({ rect }) => rect.bottom > anchorTop + 1 && rect.top < previewRect.bottom)
+        .sort((a, b) => Math.abs(a.rect.top - anchorTop) - Math.abs(b.rect.top - anchorTop))[0];
+
+    if (visibleTypesetLine) {
+        const target = getMobileScrollAnchorTarget(visibleTypesetLine.line);
+        const firstText = document.createTreeWalker(visibleTypesetLine.line, NodeFilter.SHOW_TEXT).nextNode();
+        if (target && firstText) {
+            const card = target.closest("#cards .card");
+            const role = getMobileScrollAnchorRole(target);
+            const blockSiblings = role === "cardBody"
+                ? Array.from(target.parentElement.children).filter((element) => element.matches("div, p"))
+                : [];
+            const offset = getTextOffsetWithinElement(target, firstText, 0);
+
+            return {
+                cardIndex: card ? card.dataset.cardIndex : "",
+                role,
+                blockIndex: role === "cardBody" ? Math.max(0, blockSiblings.indexOf(target)) : 0,
+                textOffset: offset,
+                textSample: target.textContent.slice(Math.max(0, offset - 8), offset + 24),
+                topOffset: visibleTypesetLine.rect.top - previewRect.top
+            };
+        }
+    }
+
+    for (const y of yValues) {
+        for (const x of xValues) {
+            const pointElement = document.elementFromPoint(x, y);
+            const typesetLine = pointElement && pointElement.closest ? pointElement.closest(".typesetLine") : null;
+            if (typesetLine && !typesetLine.closest("#mobilePreviewToolbar")) {
+                const target = getMobileScrollAnchorTarget(typesetLine);
+                const firstText = document.createTreeWalker(typesetLine, NodeFilter.SHOW_TEXT).nextNode();
+                if (target && firstText) {
+                    const card = target.closest("#cards .card");
+                    const role = getMobileScrollAnchorRole(target);
+                    const blockSiblings = role === "cardBody"
+                        ? Array.from(target.parentElement.children).filter((element) => element.matches("div, p"))
+                        : [];
+                    const rect = typesetLine.getBoundingClientRect();
+
+                    return {
+                        cardIndex: card ? card.dataset.cardIndex : "",
+                        role,
+                        blockIndex: role === "cardBody" ? Math.max(0, blockSiblings.indexOf(target)) : 0,
+                        textOffset: getTextOffsetWithinElement(target, firstText, 0),
+                        textSample: target.textContent.slice(Math.max(0, getTextOffsetWithinElement(target, firstText, 0) - 8), getTextOffsetWithinElement(target, firstText, 0) + 24),
+                        topOffset: rect.top - previewRect.top
+                    };
+                }
+            }
+
+            const range = getRangeFromPoint(x, y);
+            if (!range || !range.startContainer) continue;
+
+            const container = range.startContainer.nodeType === Node.ELEMENT_NODE
+                ? range.startContainer
+                : range.startContainer.parentElement;
+            const target = getMobileScrollAnchorTarget(container);
+            if (!target || target.closest("#mobilePreviewToolbar")) continue;
+
+            const card = target.closest("#cards .card");
+            const role = getMobileScrollAnchorRole(target);
+            const blockSiblings = role === "cardBody"
+                ? Array.from(target.parentElement.children).filter((element) => element.matches("div, p"))
+                : [];
+            const offset = range.startContainer.nodeType === Node.TEXT_NODE
+                ? getTextOffsetWithinElement(target, range.startContainer, range.startOffset)
+                : 0;
+            const rect = getRangeRectNearTextOffset(target, offset) || target.getBoundingClientRect();
+
+            return {
+                cardIndex: card ? card.dataset.cardIndex : "",
+                role,
+                blockIndex: role === "cardBody" ? Math.max(0, blockSiblings.indexOf(target)) : 0,
+                textOffset: offset,
+                textSample: target.textContent.slice(Math.max(0, offset - 8), offset + 24),
+                topOffset: rect.top - previewRect.top
+            };
+        }
+    }
+
+    return null;
+}
+
+function restorePreviewScrollAnchor(anchor, fallbackRatio) {
+    const preview = document.getElementById("preview");
+    if (!preview) return;
+
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            const target = findMobileScrollAnchorTarget(anchor);
+            const previewRect = preview.getBoundingClientRect();
+            const rect = target ? getRangeRectNearTextOffset(target, anchor.textOffset) : null;
+
+            if (!target || !rect) {
+                restorePreviewScrollRatio(fallbackRatio);
+                return;
+            }
+
+            const targetScrollTop = preview.scrollTop + rect.top - previewRect.top - anchor.topOffset;
+            const maxScroll = Math.max(0, preview.scrollHeight - preview.clientHeight);
+            preview.scrollTop = Math.min(maxScroll, Math.max(0, targetScrollTop));
+            syncPhoneScroll();
+        });
+    });
+}
+
+function getElementMetrics(element) {
+    if (!element) return null;
+
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+
+    return {
+        tagName: element.tagName,
+        className: element.className,
+        inlineStyle: element.getAttribute("style") || "",
+        textSample: (element.textContent || "").trim().slice(0, 24),
+        font: style.font,
+        fontSize: style.fontSize,
+        lineHeight: style.lineHeight,
+        letterSpacing: style.letterSpacing,
+        fontFamily: style.fontFamily,
+        fontWeight: style.fontWeight,
+        transform: style.transform,
+        paddingTop: style.paddingTop,
+        paddingBottom: style.paddingBottom,
+        marginRight: style.marginRight,
+        display: style.display,
+        whiteSpace: style.whiteSpace,
+        textSizeAdjust: style.webkitTextSizeAdjust || style.textSizeAdjust || "",
+        rect: {
+            left: Math.round(rect.left * 100) / 100,
+            top: Math.round(rect.top * 100) / 100,
+            width: Math.round(rect.width * 100) / 100,
+            height: Math.round(rect.height * 100) / 100
+        }
+    };
+}
+
+function getFirstTextRangeMetrics(root) {
+    if (!root) return null;
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+
+    while (node && !node.textContent) {
+        node = walker.nextNode();
+    }
+
+    if (!node) return null;
+
+    const text = node.textContent || "";
+    const offset = Math.max(0, text.search(/\S/));
+    if (offset >= text.length) return null;
+
+    const range = document.createRange();
+    range.setStart(node, offset);
+    range.setEnd(node, Math.min(text.length, offset + 1));
+
+    const rect = range.getBoundingClientRect();
+    return {
+        char: text.charAt(offset),
+        nodeParentClass: node.parentElement ? node.parentElement.className : "",
+        rect: {
+            left: Math.round(rect.left * 100) / 100,
+            top: Math.round(rect.top * 100) / 100,
+            width: Math.round(rect.width * 100) / 100,
+            height: Math.round(rect.height * 100) / 100
+        }
+    };
+}
+
+function getTokenAggregateMetrics(info) {
+    if (!info) return null;
+
+    const tokens = Array.from(info.querySelectorAll(".typesetToken")).slice(0, 80);
+    if (!tokens.length) return null;
+
+    const rects = tokens.map((token) => token.getBoundingClientRect()).filter((rect) => rect.width || rect.height);
+    if (!rects.length) return null;
+
+    const totalWidth = rects.reduce((sum, rect) => sum + rect.width, 0);
+    const totalHeight = rects.reduce((sum, rect) => sum + rect.height, 0);
+
+    return {
+        sampledCount: rects.length,
+        averageWidth: Math.round((totalWidth / rects.length) * 100) / 100,
+        averageHeight: Math.round((totalHeight / rects.length) * 100) / 100,
+        minWidth: Math.round(Math.min.apply(null, rects.map((rect) => rect.width)) * 100) / 100,
+        maxWidth: Math.round(Math.max.apply(null, rects.map((rect) => rect.width)) * 100) / 100
+    };
+}
+
+function getTypesetLineDebugMetrics(info) {
+    if (!info) return null;
+
+    const infoRect = info.getBoundingClientRect();
+    const infoWidth = infoRect.width || 0;
+    const lines = Array.from(info.querySelectorAll(".typesetLine"));
+    if (!lines.length) {
+        return {
+            infoWidth: Math.round(infoWidth * 100) / 100,
+            lineCount: 0,
+            shortLineCount: 0,
+            samples: []
+        };
+    }
+
+    const samples = lines.slice(0, 40).map((line, index) => {
+        const inner = line.querySelector(".typesetLineInner");
+        const lineRect = line.getBoundingClientRect();
+        const innerRect = inner ? inner.getBoundingClientRect() : lineRect;
+        const tokens = inner ? Array.from(inner.querySelectorAll(".typesetToken")) : [];
+        const tokenCount = tokens.length;
+        const spacedTokens = tokens.filter((token) => {
+            const marginRight = parseFloat(window.getComputedStyle(token).marginRight || "0");
+            return Number.isFinite(marginRight) && Math.abs(marginRight) > 0.01;
+        });
+        const lastToken = tokenCount ? tokens[tokenCount - 1] : null;
+        const text = (line.textContent || "").replace(/\s+/g, " ").trim();
+        const innerWidth = innerRect.width || 0;
+        const fillRatio = infoWidth > 0 ? innerWidth / infoWidth : 0;
+
+        return {
+            index,
+            textSample: text.slice(0, 30),
+            tokenCount,
+            spacedTokenCount: spacedTokens.length,
+            firstMarginRight: spacedTokens.length
+                ? window.getComputedStyle(spacedTokens[0]).marginRight
+                : "0px",
+            lastTokenText: lastToken ? lastToken.textContent : "",
+            lineWidth: Math.round(lineRect.width * 100) / 100,
+            innerWidth: Math.round(innerWidth * 100) / 100,
+            infoWidth: Math.round(infoWidth * 100) / 100,
+            fillRatio: Math.round(fillRatio * 1000) / 1000,
+            rightGap: Math.round((infoRect.right - innerRect.right) * 100) / 100,
+            lineRightGap: Math.round((infoRect.right - lineRect.right) * 100) / 100
+        };
+    });
+
+    return {
+        infoWidth: Math.round(infoWidth * 100) / 100,
+        lineCount: lines.length,
+        shortLineCount: samples.filter((line) => line.fillRatio < 0.8).length,
+        samples
+    };
+}
+
+function getCanvasTextMetrics(element, sampleText = "测") {
+    if (!element) return null;
+
+    const style = window.getComputedStyle(element);
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+
+    context.font = style.font;
+    const metrics = context.measureText(sampleText);
+
+    return {
+        sampleText,
+        canvasFont: context.font,
+        width: Math.round(metrics.width * 100) / 100,
+        actualBoundingBoxAscent: typeof metrics.actualBoundingBoxAscent === "number"
+            ? Math.round(metrics.actualBoundingBoxAscent * 100) / 100
+            : null,
+        actualBoundingBoxDescent: typeof metrics.actualBoundingBoxDescent === "number"
+            ? Math.round(metrics.actualBoundingBoxDescent * 100) / 100
+            : null,
+        fontBoundingBoxAscent: typeof metrics.fontBoundingBoxAscent === "number"
+            ? Math.round(metrics.fontBoundingBoxAscent * 100) / 100
+            : null,
+        fontBoundingBoxDescent: typeof metrics.fontBoundingBoxDescent === "number"
+            ? Math.round(metrics.fontBoundingBoxDescent * 100) / 100
+            : null
+    };
+}
+
+function getMobileDebugLogEndpoint() {
+    if (!window.location.hostname) return "";
+
+    return `${window.location.protocol}//${window.location.hostname}:4174/debug-log`;
+}
+
+function getDebugTextCandidateRole(element) {
+    if (!element) return "";
+    if (element.id) return `#${element.id}`;
+    if (element.classList.contains("cardTitle")) return ".cardTitle";
+    if (element.classList.contains("info")) return ".info";
+    return element.tagName;
+}
+
+function getDebugTextCandidates() {
+    const selector = "#year, #subtitle, #side, #cards .cardTitle, #cards .card .info";
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+
+    return Array.from(document.querySelectorAll(selector)).map((element, index) => {
+        const rect = element.getBoundingClientRect();
+        const text = (element.textContent || "").trim();
+        const isVisible = rect.width > 0
+            && rect.height > 0
+            && rect.bottom >= 0
+            && rect.right >= 0
+            && rect.top <= viewportHeight
+            && rect.left <= viewportWidth;
+        const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+        const card = element.closest("#cards .card");
+
+        return {
+            index,
+            role: getDebugTextCandidateRole(element),
+            cardIndex: card ? card.dataset.cardIndex : "",
+            hasText: Boolean(text),
+            textLength: text.length,
+            textSample: text.slice(0, 40),
+            isVisible,
+            visibleArea: Math.round(area * 100) / 100,
+            hasTypesetLine: Boolean(element.querySelector(".typesetLine")),
+            metrics: getElementMetrics(element),
+            firstTextRange: getFirstTextRangeMetrics(element),
+            canvas: getCanvasTextMetrics(element),
+            element
+        };
+    });
+}
+
+function chooseDebugTextCandidate(candidates) {
+    const visibleWithText = candidates
+        .filter((candidate) => candidate.hasText && candidate.isVisible)
+        .sort((a, b) => b.visibleArea - a.visibleArea);
+
+    if (visibleWithText.length) return visibleWithText[0];
+
+    const withText = candidates
+        .filter((candidate) => candidate.hasText)
+        .sort((a, b) => b.visibleArea - a.visibleArea);
+
+    if (withText.length) return withText[0];
+
+    return candidates[0] || null;
+}
+
+function sendMobileFontDebugMetrics(result) {
+    const endpoint = getMobileDebugLogEndpoint();
+    if (!endpoint) return;
+
+    const payload = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        pageUrl: window.location.href,
+        userAgent: navigator.userAgent,
+        metrics: result
+    });
+
+    try {
+        window.fetch(endpoint, {
+            method: "POST",
+            mode: "cors",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: payload,
+            keepalive: true
+        }).catch((error) => {
+            try {
+                if (navigator.sendBeacon) {
+                    const blob = new Blob([payload], { type: "application/json" });
+                    navigator.sendBeacon(endpoint, blob);
+                    return;
+                }
+            } catch (_beaconError) {
+                // Keep the debug alert usable even when terminal logging fails.
+            }
+
+            console.warn("Mobile font metrics debug POST failed", error);
+        });
+    } catch (error) {
+        try {
+            if (navigator.sendBeacon) {
+                const blob = new Blob([payload], { type: "application/json" });
+                navigator.sendBeacon(endpoint, blob);
+                return;
+            }
+        } catch (_beaconError) {
+            // Keep the debug alert usable even when terminal logging fails.
+        }
+
+        console.warn("Mobile font metrics debug POST failed", error);
+    }
+}
+
+function debugMobileFontMetrics() {
+    const candidates = getDebugTextCandidates();
+    const selectedCandidate = chooseDebugTextCandidate(candidates);
+    const selectedElement = selectedCandidate ? selectedCandidate.element : null;
+    const selectedCard = selectedElement ? selectedElement.closest(".card") : null;
+    const info = selectedElement && selectedElement.classList.contains("info")
+        ? selectedElement
+        : (selectedCard ? selectedCard.querySelector(".info") : null);
+    const token = info ? info.querySelector(".typesetToken") : null;
+    const line = selectedElement
+        ? (selectedElement.querySelector(".typesetLine") || (info ? info.querySelector(".typesetLine") : null))
+        : null;
+    const lineInner = line ? line.querySelector(".typesetLineInner") : null;
+    const target = token || selectedElement || info;
+    const bodyStyle = window.getComputedStyle(document.body);
+    const rootStyle = window.getComputedStyle(document.documentElement);
+    const preview = document.getElementById("preview");
+    const viewport = window.visualViewport;
+    const tokenSamples = info
+        ? Array.from(info.querySelectorAll(".typesetToken")).slice(0, 6).map((element) => getElementMetrics(element))
+        : [];
+    const result = {
+        previewMode: document.body.classList.contains("mobilePosterPreviewMode"),
+        hasTypesetLine: Boolean(line),
+        selectedCandidate: selectedCandidate ? {
+            index: selectedCandidate.index,
+            role: selectedCandidate.role,
+            cardIndex: selectedCandidate.cardIndex,
+            hasText: selectedCandidate.hasText,
+            textLength: selectedCandidate.textLength,
+            textSample: selectedCandidate.textSample,
+            isVisible: selectedCandidate.isVisible,
+            visibleArea: selectedCandidate.visibleArea,
+            hasTypesetLine: selectedCandidate.hasTypesetLine
+        } : null,
+        textCandidates: candidates.map((candidate) => ({
+            index: candidate.index,
+            role: candidate.role,
+            cardIndex: candidate.cardIndex,
+            hasText: candidate.hasText,
+            textLength: candidate.textLength,
+            textSample: candidate.textSample,
+            isVisible: candidate.isVisible,
+            visibleArea: candidate.visibleArea,
+            hasTypesetLine: candidate.hasTypesetLine,
+            metrics: candidate.metrics,
+            firstTextRange: candidate.firstTextRange,
+            canvas: candidate.canvas
+        })),
+        target: getElementMetrics(target),
+        selectedElement: getElementMetrics(selectedElement),
+        info: getElementMetrics(info),
+        line: getElementMetrics(line),
+        lineInner: getElementMetrics(lineInner),
+        firstInfoTextRange: getFirstTextRangeMetrics(info),
+        firstTargetTextRange: getFirstTextRangeMetrics(target),
+        tokenAggregate: getTokenAggregateMetrics(info),
+        lineDebug: getTypesetLineDebugMetrics(info),
+        canvasTarget: getCanvasTextMetrics(target),
+        canvasInfo: getCanvasTextMetrics(info),
+        tokenSamples,
+        bodyTextSizeAdjust: bodyStyle.webkitTextSizeAdjust || bodyStyle.textSizeAdjust || "",
+        rootTextSizeAdjust: rootStyle.webkitTextSizeAdjust || rootStyle.textSizeAdjust || "",
+        viewport: {
+            innerWidth: window.innerWidth,
+            innerHeight: window.innerHeight,
+            clientWidth: document.documentElement.clientWidth,
+            clientHeight: document.documentElement.clientHeight,
+            visualWidth: viewport ? Math.round(viewport.width * 100) / 100 : null,
+            visualHeight: viewport ? Math.round(viewport.height * 100) / 100 : null,
+            visualScale: viewport ? viewport.scale : null,
+            devicePixelRatio: window.devicePixelRatio
+        },
+        previewScroll: preview ? {
+            scrollTop: Math.round(preview.scrollTop),
+            clientHeight: preview.clientHeight,
+            scrollHeight: preview.scrollHeight
+        } : null
+    };
+    const output = JSON.stringify(result, null, 2);
+
+    console.log("Mobile font metrics", result);
+    sendMobileFontDebugMetrics(result);
+    alert(output);
+    return result;
+}
+
+async function toggleMobilePreviewMode() {
+    if (!isMobileViewport()) return;
+
+    const scrollRatio = getPreviewScrollRatio();
+    const scrollAnchor = captureMobilePreviewScrollAnchor();
+
+    if (mobilePosterPreviewMode) {
+        mobilePosterPreviewMode = false;
+        applyMobilePreviewModeState();
+        await renderPreview({
+            deferTypesetting: true,
+            scheduleDeferredTypesetting: false,
+            shouldSave: false,
+            markMobileTypesettingDirtyOnDefer: false
+        });
+        restorePreviewScrollAnchor(scrollAnchor, scrollRatio);
+        return;
+    }
+
+    if (mobileTypesettingDirty || hasPendingMobileTextInput() || !isMobilePreviewTypesetReady()) {
+        scheduleDelayedMobileTypesettingBusy(500);
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        try {
+            await flushMobileTypesettingIfNeeded({ force: true, showBusy: false });
+        } finally {
+            clearMobileTypesettingBusy();
+        }
+    }
+
+    mobilePosterPreviewMode = true;
+    applyMobilePreviewModeState();
+    restorePreviewScrollAnchor(scrollAnchor, scrollRatio);
 }
 
 function toggleEditorCollapsed(event = null) {
@@ -4595,6 +5648,7 @@ if (subtitleInput) {
 
 bindCustomColorPanel("background");
 bindCustomColorPanel("text");
+document.addEventListener("pointerdown", handleCustomColorOutsidePointerDown, true);
 
 if (customColorModalBackdrop) {
     customColorModalBackdrop.onclick = function () {
@@ -4607,6 +5661,20 @@ if (customColorModalBackdrop) {
 if (articleManagerBackdrop) {
     articleManagerBackdrop.addEventListener("click", closeArticleManagerModal);
 }
+
+if (changelogModal) {
+    changelogModal.addEventListener("click", (event) => {
+        if (event.target === changelogModal) {
+            closeChangelogModal();
+        }
+    });
+}
+
+document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && changelogModal && !changelogModal.hidden) {
+        closeChangelogModal();
+    }
+});
 
 if (backgroundImageInput) {
     backgroundImageInput.onchange = function () {
@@ -4663,12 +5731,26 @@ function scheduleViewportResizeCompletion() {
 
     viewportResizeCompletionTimer = window.setTimeout(() => {
         viewportResizeCompletionTimer = null;
-        renderPreview({ deferTypesetting: true });
+        renderPreview({ deferTypesetting: !(mobilePosterPreviewMode && isMobileViewport()) });
     }, DIVIDER_DRAG_RENDER_DELAY_MS);
 }
 
 function handleViewportChange() {
     syncCustomColorModalMode();
+    const viewportWidth = Math.round(getViewportSize().width);
+    const previousViewportWidth = lastResponsiveViewportWidth;
+    const isMobileHeightOnlyResize = isMobileViewport()
+        && previousViewportWidth > 0
+        && Math.abs(viewportWidth - previousViewportWidth) <= 1;
+
+    lastResponsiveViewportWidth = viewportWidth;
+    applyResponsiveViewport();
+
+    if (isMobileHeightOnlyResize) {
+        syncPreviewExportActionsPosition();
+        applyMobilePreviewModeState();
+        return;
+    }
 
     if (viewportResizeRenderFrame === null) {
         viewportResizeRenderFrame = requestAnimationFrame(() => {
@@ -4683,7 +5765,7 @@ function handleViewportChange() {
 
     scheduleViewportResizeCompletion();
     syncPreviewExportActionsPosition();
-    updateMobileTypesetRefreshButton();
+    applyMobilePreviewModeState();
 }
 
 const previewScrollContainer = document.getElementById("preview");
@@ -4719,6 +5801,8 @@ async function initializeApp() {
             saveState({ immediate: true });
         }
     });
+
+    showChangelogModalOnceForLatestUpdate();
 }
 
 initializeApp();

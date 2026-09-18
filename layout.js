@@ -57,7 +57,15 @@ const TYPESET_FORBIDDEN_LINE_END = new Set(Array.from("([{｛【（《〈「『�
 const TYPESET_MAX_SCALE_SQUEEZE = 0.96;
 const TYPESET_MIN_SPACING_SQUEEZE = -1.8;
 const TYPESET_MAX_JUSTIFY_SPACING = 8;
+const TYPESET_MAX_RENDERED_JUSTIFY_SPACING = 3;
+const TYPESET_RENDERED_JUSTIFY_MAX_PASSES = 6;
+const TYPESET_RENDERED_JUSTIFY_EDGE_TOLERANCE = 0.75;
+const TYPESET_TRAILING_PUNCTUATION_MIN_SPACING = -2.8;
+const TYPESET_TRAILING_PUNCTUATION_MIN_SCALE = 0.9;
+const TYPESET_TRAILING_PUNCTUATION_EDGE_TOLERANCE = 1;
 const TYPESET_MIN_JUSTIFY_FILL_RATIO = 0.72;
+const TYPESET_MOBILE_MIN_RENDERED_FILL_RATIO = 0.9;
+const TYPESET_MOBILE_MAX_WIDTH_CALIBRATION = 1.45;
 const SUBTITLE_MIN_SINGLE_LINE_SPACING = -18;
 const SUBTITLE_MIN_SINGLE_LINE_SCALE = 0.82;
 const PREVIEW_RENDER_DELAY_MS = 180;
@@ -90,6 +98,9 @@ const pendingMobileTextInputs = new Map();
 let pendingMobileTextInputTimer = null;
 const pendingCardTypesetTasks = new Map();
 let mobileTypesettingDirty = false;
+let mobilePreviewTypesetReady = false;
+let mobilePosterPreviewMode = false;
+let mobileTypesettingBusyTimer = null;
 let pendingPosterTypesetTask = null;
 let pendingTypesettingOverlayTimer = null;
 let pendingTypesettingOverlayHideTimer = null;
@@ -141,28 +152,148 @@ function copyTypesetTextStyles(source, target) {
 }
 
 function getTypesetTokenStyle(element, root) {
-    const style = window.getComputedStyle(element.nodeType === Node.ELEMENT_NODE ? element : root);
-    return {
-        fontFamily: style.fontFamily,
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight,
-        fontStyle: style.fontStyle,
-        fontVariant: style.fontVariant,
-        fontStretch: style.fontStretch,
-        letterSpacing: style.letterSpacing,
-        textDecorationLine: style.textDecorationLine,
-        textDecorationStyle: style.textDecorationStyle,
-        textDecorationColor: style.textDecorationColor,
-        color: style.color
-    };
+    const tokenStyle = {};
+    let current = element && element.nodeType === Node.ELEMENT_NODE ? element : null;
+    const styleChain = [];
+    const decorationLines = [];
+
+    function addDecorationLine(value) {
+        if (!value || value === "none") return;
+
+        String(value).split(/\s+/).forEach((item) => {
+            if (item && item !== "none" && !decorationLines.includes(item)) {
+                decorationLines.push(item);
+            }
+        });
+    }
+
+    while (current && current !== root) {
+        if (current.nodeType === Node.ELEMENT_NODE) {
+            styleChain.unshift(current);
+        }
+
+        current = current.parentElement;
+    }
+
+    styleChain.forEach((styleElement) => {
+        const tagName = styleElement.tagName;
+        const inlineStyle = styleElement.style || {};
+
+        if (tagName === "B" || tagName === "STRONG") {
+            tokenStyle.fontWeight = "bold";
+        }
+        if (inlineStyle.fontWeight) {
+            tokenStyle.fontWeight = inlineStyle.fontWeight;
+        }
+
+        if (tagName === "I" || tagName === "EM") {
+            tokenStyle.fontStyle = "italic";
+        }
+        if (inlineStyle.fontStyle) {
+            tokenStyle.fontStyle = inlineStyle.fontStyle;
+        }
+
+        if (tagName === "U") {
+            addDecorationLine("underline");
+        }
+        if (tagName === "S" || tagName === "STRIKE") {
+            addDecorationLine("line-through");
+        }
+
+        if (inlineStyle.fontSize) {
+            tokenStyle.fontSize = inlineStyle.fontSize;
+        }
+        if (inlineStyle.fontFamily) {
+            tokenStyle.fontFamily = inlineStyle.fontFamily;
+        }
+        if (inlineStyle.color) {
+            tokenStyle.color = inlineStyle.color;
+        }
+        if (inlineStyle.textDecorationLine) {
+            addDecorationLine(inlineStyle.textDecorationLine);
+        }
+        if (inlineStyle.textDecorationStyle) {
+            tokenStyle.textDecorationStyle = inlineStyle.textDecorationStyle;
+        }
+        if (inlineStyle.textDecorationColor) {
+            tokenStyle.textDecorationColor = inlineStyle.textDecorationColor;
+        }
+        if (inlineStyle.textDecoration) {
+            tokenStyle.textDecoration = inlineStyle.textDecoration;
+        }
+    });
+
+    if (decorationLines.length) {
+        tokenStyle.textDecorationLine = decorationLines.join(" ");
+    }
+
+    return tokenStyle;
 }
 
 function applyTypesetTokenStyle(element, style) {
     Object.entries(style).forEach(([property, value]) => {
         if (value) {
             element.style[property] = value;
+            if (property === "color") {
+                element.dataset.richTextExplicitColor = "true";
+            }
         }
     });
+}
+
+function splitTypesetDecorationStyle(style = {}) {
+    const tokenStyle = {};
+    const decorationStyle = {};
+    const decorationProperties = new Set([
+        "textDecoration",
+        "textDecorationLine",
+        "textDecorationStyle",
+        "textDecorationColor"
+    ]);
+
+    Object.entries(style).forEach(([property, value]) => {
+        if (!value) return;
+
+        if (decorationProperties.has(property)) {
+            decorationStyle[property] = value;
+        } else {
+            tokenStyle[property] = value;
+        }
+    });
+
+    return {
+        tokenStyle,
+        decorationStyle
+    };
+}
+
+function getTypesetDecorationKey(style = {}) {
+    const line = style.textDecorationLine || "";
+    const shorthand = style.textDecoration || "";
+    if (!line && !shorthand) return "";
+
+    return [
+        line,
+        style.textDecorationStyle || "",
+        style.textDecorationColor || "",
+        shorthand
+    ].join("|");
+}
+
+function createTypesetDecorationRun(style) {
+    const run = document.createElement("span");
+    const decorationLine = style.textDecorationLine || style.textDecoration || "";
+    const decorationColor = style.textDecorationColor || "";
+    run.className = "typesetDecorationRun";
+
+    if (decorationLine) {
+        run.dataset.decorationLines = decorationLine;
+    }
+    if (decorationColor) {
+        run.style.setProperty("--typeset-decoration-color", decorationColor);
+    }
+
+    return run;
 }
 
 function collectTypesetTokens(root, node = root, tokens = []) {
@@ -198,6 +329,8 @@ function createTypesetLineElement(tokens, adjustment = null, { includeShadow = f
     const line = document.createElement("span");
     const inner = document.createElement("span");
     const textAlign = normalizeTextAlign(align);
+    let currentDecorationRun = null;
+    let currentDecorationKey = "";
     line.className = "typesetLine";
     inner.className = "typesetLineInner";
     line.style.textAlign = textAlign;
@@ -217,15 +350,30 @@ function createTypesetLineElement(tokens, adjustment = null, { includeShadow = f
 
     tokens.forEach((token, index) => {
         const span = document.createElement("span");
+        const splitStyle = splitTypesetDecorationStyle(token.style);
+        const decorationKey = getTypesetDecorationKey(splitStyle.decorationStyle);
         span.className = "typesetToken";
         span.textContent = token.text === " " ? "\u00a0" : token.text;
-        applyTypesetTokenStyle(span, token.style);
+        applyTypesetTokenStyle(span, splitStyle.tokenStyle);
 
         if (adjustment && adjustment.type === "spacing" && index < tokens.length - 1 && isTypesetSpacingTarget(token)) {
             span.style.marginRight = `${adjustment.spacing}px`;
         }
 
-        inner.appendChild(span);
+        if (!decorationKey) {
+            currentDecorationRun = null;
+            currentDecorationKey = "";
+            inner.appendChild(span);
+            return;
+        }
+
+        if (!currentDecorationRun || currentDecorationKey !== decorationKey) {
+            currentDecorationRun = createTypesetDecorationRun(splitStyle.decorationStyle);
+            currentDecorationKey = decorationKey;
+            inner.appendChild(currentDecorationRun);
+        }
+
+        currentDecorationRun.appendChild(span);
     });
 
     if (!tokens.length) {
@@ -316,7 +464,9 @@ function createFastTypesetRangeMeasurer(tokens, root) {
 }
 
 function createTypesetRangeMeasurer(tokens, root, { forceDomMeasure = false } = {}) {
-    if (!forceDomMeasure && tokens.length > 160) {
+    const shouldUseFastCanvasMeasure = typeof isMobileViewport !== "function" || !isMobileViewport();
+
+    if (!forceDomMeasure && shouldUseFastCanvasMeasure && tokens.length > 160) {
         const fastMeasurer = createFastTypesetRangeMeasurer(tokens, root);
         if (fastMeasurer) return fastMeasurer;
     }
@@ -361,24 +511,64 @@ function getMobileTypesetRefreshButton() {
     return document.getElementById("mobileTypesetRefreshBtn");
 }
 
+function hasPendingMobileTextInput() {
+    return pendingMobileTextInputs.size > 0;
+}
+
+function markMobilePreviewTypesetStale() {
+    mobilePreviewTypesetReady = false;
+}
+
+function markMobilePreviewTypesetReady() {
+    mobilePreviewTypesetReady = true;
+}
+
+function isMobilePreviewTypesetReady() {
+    return mobilePreviewTypesetReady;
+}
+
 function updateMobileTypesetRefreshButton({ busy = false } = {}) {
     const button = getMobileTypesetRefreshButton();
     if (!button) return;
 
     const shouldShow = isMobileViewport();
     button.classList.toggle("visible", shouldShow);
-    button.classList.toggle("dirty", mobileTypesettingDirty);
+    button.classList.toggle("dirty", mobileTypesettingDirty && !mobilePosterPreviewMode);
+    button.classList.toggle("previewing", mobilePosterPreviewMode);
     button.classList.toggle("busy", busy);
-    button.disabled = busy || !mobileTypesettingDirty;
+    button.disabled = busy;
+    button.setAttribute("aria-pressed", String(mobilePosterPreviewMode));
     button.innerText = busy
         ? "排版中..."
-        : (mobileTypesettingDirty ? "刷新排版" : "无修改待刷新");
+        : (mobilePosterPreviewMode ? "编辑" : "预览");
+}
+
+function cancelDelayedMobileTypesettingBusy() {
+    if (mobileTypesettingBusyTimer === null) return;
+
+    window.clearTimeout(mobileTypesettingBusyTimer);
+    mobileTypesettingBusyTimer = null;
+}
+
+function scheduleDelayedMobileTypesettingBusy(delay = 500) {
+    cancelDelayedMobileTypesettingBusy();
+
+    mobileTypesettingBusyTimer = window.setTimeout(() => {
+        mobileTypesettingBusyTimer = null;
+        updateMobileTypesetRefreshButton({ busy: true });
+    }, delay);
+}
+
+function clearMobileTypesettingBusy() {
+    cancelDelayedMobileTypesettingBusy();
+    updateMobileTypesetRefreshButton();
 }
 
 function markMobileTypesettingDirty() {
     if (!isMobileViewport()) return false;
 
     mobileTypesettingDirty = true;
+    markMobilePreviewTypesetStale();
     updateMobileTypesetRefreshButton();
     return true;
 }
@@ -431,28 +621,27 @@ function renderOrderChangePreview() {
     saveState();
 }
 
-async function flushMobileTypesettingIfNeeded({ force = false } = {}) {
-    if (!force && (!isMobileViewport() || !mobileTypesettingDirty)) return false;
+async function flushMobileTypesettingIfNeeded({ force = false, showBusy = true } = {}) {
+    if (!isMobileViewport()) return false;
+    if (!force && !mobileTypesettingDirty && isMobilePreviewTypesetReady()) return false;
 
     flushPendingMobileTextInputs();
     await flushPendingPreviewRender();
     await flushDeferredCardTypesetting();
     await flushDeferredPosterTypesetting();
 
-    updateMobileTypesetRefreshButton({ busy: true });
+    if (showBusy) {
+        updateMobileTypesetRefreshButton({ busy: true });
+    }
     applyPosterTypesetting();
     syncCardsOffset();
     schedulePhonePreviewSync();
     schedulePosterBackgroundSync(document.getElementById("poster"));
+    markMobilePreviewTypesetReady();
     clearMobileTypesettingDirty();
+    clearMobileTypesettingBusy();
     saveState();
     return true;
-}
-
-async function refreshMobileTypesetting() {
-    if (!isMobileViewport()) return;
-
-    await flushMobileTypesettingIfNeeded({ force: true });
 }
 
 async function flushPendingPreviewRender() {
@@ -886,6 +1075,20 @@ function justifyTypesetLines(lines, maxWidth) {
     return lines;
 }
 
+function rebuildJustifyAdjustments(lines, maxWidth) {
+    return lines.map((line) => ({
+        ...line,
+        adjustment: line.adjustment && line.adjustment.type === "scale"
+            ? line.adjustment
+            : null
+    })).map((line, index, nextLines) => {
+        if (index === nextLines.length - 1) return line;
+
+        const adjustment = getJustifyTypesetLineAdjustment(line, maxWidth);
+        return adjustment ? { ...line, adjustment } : line;
+    });
+}
+
 function getTypesetSegmentFitEnd(tokens, start, end, maxWidth, measureRange) {
     if (start >= end) return start;
     if (measureRange(start, end) <= maxWidth) return end;
@@ -992,12 +1195,244 @@ function renderTypesetLines(element, lines) {
     const align = normalizeTextAlign(window.getComputedStyle(element).textAlign);
 
     lines.forEach((line) => {
-        fragment.appendChild(createTypesetLineElement(line.tokens, line.adjustment, { includeShadow, align }));
+        const lineElement = createTypesetLineElement(line.tokens, line.adjustment, { includeShadow, align });
+        if (line.forcedBreakAfter) {
+            lineElement.dataset.typesetForcedBreakAfter = "true";
+        }
+        fragment.appendChild(lineElement);
     });
 
     element.innerHTML = "";
     element.classList.add("typesetText");
     element.appendChild(fragment);
+    containTypesetLineOverflows(element);
+}
+
+function applyRenderedJustifySpacing(element) {
+    if (!element || !element.matches(".info div, .info p")) return;
+
+    const lines = Array.from(element.querySelectorAll(".typesetLine"));
+    lines.forEach((line, index) => {
+        if (index >= lines.length - 1 || line.dataset.typesetForcedBreakAfter === "true") return;
+
+        const inner = line.querySelector(".typesetLineInner");
+        if (!inner) return;
+
+        const spacingTargets = Array.from(inner.querySelectorAll(".typesetToken")).filter((token, tokenIndex, tokens) => {
+            return tokenIndex < tokens.length - 1 && isTypesetSpacingTarget({ text: token.textContent || "" });
+        });
+        if (!spacingTargets.length) return;
+
+        const tokens = Array.from(inner.querySelectorAll(".typesetToken"));
+        const lastToken = tokens.length ? tokens[tokens.length - 1] : null;
+        if (!lastToken) return;
+
+        clearRenderedLineAdjustment(tokens, spacingTargets);
+
+        let spacing = 0;
+        for (let pass = 0; pass < TYPESET_RENDERED_JUSTIFY_MAX_PASSES; pass += 1) {
+            const gap = getRenderedLineRightGap(line, lastToken);
+            if (!Number.isFinite(gap) || Math.abs(gap) <= TYPESET_RENDERED_JUSTIFY_EDGE_TOLERANCE) break;
+
+            const nextSpacing = clampRenderedJustifySpacing(spacing + gap / spacingTargets.length);
+            if (!Number.isFinite(nextSpacing) || Math.abs(nextSpacing - spacing) < 0.02) break;
+
+            spacing = nextSpacing;
+            applyTokenSpacing(spacingTargets, spacing);
+        }
+
+        containTrailingPunctuationOverflow(line, lastToken);
+    });
+}
+
+function clearRenderedLineAdjustment(tokens, spacingTargets) {
+    spacingTargets.forEach((token) => {
+        token.style.marginRight = "";
+    });
+
+    tokens.forEach((token) => {
+        token.style.position = "";
+        token.style.left = "";
+    });
+}
+
+function applyTokenSpacing(tokens, spacing) {
+    tokens.forEach((token) => {
+        token.style.marginRight = spacing ? `${spacing}px` : "";
+    });
+}
+
+function clampRenderedJustifySpacing(spacing) {
+    return Math.max(
+        TYPESET_MIN_SPACING_SQUEEZE,
+        Math.min(TYPESET_MAX_RENDERED_JUSTIFY_SPACING, spacing)
+    );
+}
+
+function getRenderedLineRightGap(line, lastToken) {
+    const lineRect = line.getBoundingClientRect();
+    const tokenRect = lastToken.getBoundingClientRect();
+    return lineRect.right - tokenRect.right;
+}
+
+function getInlineScaleX(element) {
+    const transform = (element && element.style && element.style.transform) || "";
+    const match = transform.match(/scaleX\(([^)]+)\)/);
+    if (!match) return 1;
+
+    const scale = parseFloat(match[1]);
+    return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+function applyInlineScaleX(element, scale) {
+    if (!element || !Number.isFinite(scale) || scale <= 0) return;
+
+    element.style.transform = scale === 1 ? "" : `scaleX(${scale})`;
+}
+
+function getCurrentMarginRight(element) {
+    const value = parseFloat((element && element.style && element.style.marginRight) || "0");
+    return Number.isFinite(value) ? value : 0;
+}
+
+function getLineTrailingOverflow(line, token) {
+    if (!line || !token) return 0;
+
+    const lineRect = line.getBoundingClientRect();
+    const tokenRect = token.getBoundingClientRect();
+    const overflow = tokenRect.right - lineRect.right;
+    return Number.isFinite(overflow) ? overflow : 0;
+}
+
+function isTypesetTrailingPunctuation(text) {
+    const chars = Array.from(String(text || ""));
+    if (!chars.length) return false;
+
+    const char = chars[chars.length - 1];
+    if (/[\u3001\u3002\uff0c\uff0e\uff1a\uff1b\uff01\uff1f\uff09\uff3d\uff5d\u3009\u300b\u300d\u300f\u3011\u3015\u3017\u3019\u301b\u2019\u201d.,!?:;)\]}]/.test(char)) return true;
+    return TYPESET_FORBIDDEN_LINE_START.has(char) || /[，。！？、：；）】》」』”’.,!?:;)\]}]/.test(char);
+}
+
+function containTrailingPunctuationOverflow(line, token) {
+    if (!line || !token || !isTypesetTrailingPunctuation(token.textContent)) return;
+
+    token.style.position = "";
+    token.style.left = "";
+
+    let overflow = getLineTrailingOverflow(line, token);
+    if (overflow <= TYPESET_TRAILING_PUNCTUATION_EDGE_TOLERANCE) return;
+
+    const inner = line.querySelector(".typesetLineInner");
+    const tokens = inner ? Array.from(inner.querySelectorAll(".typesetToken")) : [];
+    const spacingTargets = tokens.filter((item, index) => {
+        return index < tokens.length - 1 && isTypesetSpacingTarget({ text: item.textContent || "" });
+    });
+
+    if (spacingTargets.length) {
+        const extraSpacing = overflow / spacingTargets.length;
+        spacingTargets.forEach((item) => {
+            const nextSpacing = Math.max(
+                getCurrentMarginRight(item) - extraSpacing,
+                TYPESET_TRAILING_PUNCTUATION_MIN_SPACING
+            );
+            item.style.marginRight = nextSpacing ? `${nextSpacing}px` : "";
+        });
+
+        overflow = getLineTrailingOverflow(line, token);
+        if (overflow <= TYPESET_TRAILING_PUNCTUATION_EDGE_TOLERANCE) return;
+    }
+
+    if (inner) {
+        const innerRect = inner.getBoundingClientRect();
+        const lineRect = line.getBoundingClientRect();
+        const currentScale = getInlineScaleX(inner);
+        const targetScale = innerRect.width > 0
+            ? Math.max(currentScale * (lineRect.width / innerRect.width), TYPESET_TRAILING_PUNCTUATION_MIN_SCALE)
+            : currentScale;
+
+        if (targetScale < currentScale) {
+            applyInlineScaleX(inner, targetScale);
+            overflow = getLineTrailingOverflow(line, token);
+            if (overflow <= TYPESET_TRAILING_PUNCTUATION_EDGE_TOLERANCE) return;
+        }
+    }
+
+    const fontSize = parseFloat(window.getComputedStyle(token).fontSize || "0");
+    const maxShift = Number.isFinite(fontSize) && fontSize > 0 ? fontSize * 0.45 : 8;
+    const shift = Math.min(overflow, maxShift);
+
+    token.style.position = "relative";
+    token.style.left = `${-shift}px`;
+}
+
+function containTypesetLineOverflows(element) {
+    Array.from((element && element.querySelectorAll(".typesetLine")) || []).forEach((line) => {
+        const tokens = Array.from(line.querySelectorAll(".typesetToken"));
+        const lastToken = tokens.length ? tokens[tokens.length - 1] : null;
+        containTrailingPunctuationOverflow(line, lastToken);
+    });
+}
+
+function getRenderedJustifySpacingNeed(element) {
+    if (!element || !element.matches(".info div, .info p")) return null;
+
+    const lines = Array.from(element.querySelectorAll(".typesetLine"));
+    let maxSpacing = 0;
+    let overLimitCount = 0;
+    let checkedLineCount = 0;
+
+    lines.forEach((line, index) => {
+        if (index >= lines.length - 1 || line.dataset.typesetForcedBreakAfter === "true") return;
+
+        const inner = line.querySelector(".typesetLineInner");
+        if (!inner) return;
+
+        const spacingTargetCount = Array.from(inner.querySelectorAll(".typesetToken")).filter((token, tokenIndex, tokens) => {
+            return tokenIndex < tokens.length - 1 && isTypesetSpacingTarget({ text: token.textContent || "" });
+        }).length;
+        if (!spacingTargetCount) return;
+
+        const lineWidth = line.getBoundingClientRect().width;
+        const innerWidth = inner.getBoundingClientRect().width;
+        const gap = lineWidth - innerWidth;
+        if (!Number.isFinite(gap) || gap <= 1) return;
+
+        const spacing = gap / spacingTargetCount;
+        if (!Number.isFinite(spacing) || spacing <= 0) return;
+
+        checkedLineCount += 1;
+        maxSpacing = Math.max(maxSpacing, spacing);
+        if (spacing > TYPESET_MAX_RENDERED_JUSTIFY_SPACING) {
+            overLimitCount += 1;
+        }
+    });
+
+    return {
+        checkedLineCount,
+        overLimitCount,
+        maxSpacing
+    };
+}
+
+function getRenderedTypesetFillRatio(element, maxWidth) {
+    if (!element || !maxWidth) return null;
+
+    const ratios = Array.from(element.querySelectorAll(".typesetLine")).map((line, index, lines) => {
+        if (index >= lines.length - 1) return null;
+
+        const inner = line.querySelector(".typesetLineInner");
+        if (!inner) return null;
+
+        const width = inner.getBoundingClientRect().width;
+        if (!Number.isFinite(width) || width <= 0 || width > maxWidth) return null;
+
+        return width / maxWidth;
+    }).filter((ratio) => ratio !== null);
+
+    if (ratios.length < 3) return null;
+
+    ratios.sort((a, b) => a - b);
+    return ratios[Math.floor(ratios.length / 2)];
 }
 
 function hasOverflowingTypesetLine(element, maxWidth) {
@@ -1013,8 +1448,53 @@ function typesetTextElement(element, { strategy = TYPESET_ADJUST_STRATEGY, justi
     const tokens = collectTypesetTokens(element);
     const maxWidth = getTypesetAvailableWidth(element);
     const options = { strategy, justify };
-    const lines = buildTypesetLines(tokens, element, maxWidth, options);
+    const shouldUseMobileRenderedJustify = justify
+        && typeof isMobileViewport === "function"
+        && isMobileViewport()
+        && element.matches(".info div, .info p");
 
+    if (shouldUseMobileRenderedJustify) {
+        let calibration = 1;
+        const maxCalibration = Math.max(1, TYPESET_MOBILE_MAX_WIDTH_CALIBRATION);
+
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+            const calibratedLines = buildTypesetLines(tokens, element, maxWidth * calibration, {
+                ...options,
+                justify: false
+            });
+            renderTypesetLines(element, calibratedLines);
+
+            const renderedFillRatio = getRenderedTypesetFillRatio(element, maxWidth);
+            const spacingNeed = getRenderedJustifySpacingNeed(element);
+            const needsFillCalibration = renderedFillRatio && renderedFillRatio < TYPESET_MOBILE_MIN_RENDERED_FILL_RATIO;
+            const needsSpacingCalibration = spacingNeed
+                && spacingNeed.overLimitCount > 0
+                && spacingNeed.maxSpacing > TYPESET_MAX_RENDERED_JUSTIFY_SPACING;
+
+            if ((!needsFillCalibration && !needsSpacingCalibration) || calibration >= maxCalibration) {
+                break;
+            }
+
+            const fillCalibration = needsFillCalibration
+                ? Math.max(calibration, 1 / renderedFillRatio)
+                : calibration;
+            const spacingCalibration = needsSpacingCalibration
+                ? calibration * Math.min(spacingNeed.maxSpacing / TYPESET_MAX_RENDERED_JUSTIFY_SPACING, 1.18)
+                : calibration;
+            const nextCalibration = Math.min(maxCalibration, Math.max(fillCalibration, spacingCalibration));
+
+            if (nextCalibration <= calibration + 0.01) {
+                break;
+            }
+
+            calibration = nextCalibration;
+        }
+
+        applyRenderedJustifySpacing(element);
+        return;
+    }
+
+    const lines = buildTypesetLines(tokens, element, maxWidth, options);
     renderTypesetLines(element, lines);
 
     if (tokens.length > 160 && hasOverflowingTypesetLine(element, maxWidth)) {
@@ -1108,6 +1588,7 @@ function getPhoneRenderSignature() {
         showTimeline,
         showMonthTitles,
         showMonthUnderlines,
+        showParagraphDividers,
         showSideHeader,
         showYearShadow,
         showBottomWatermark,

@@ -69,29 +69,70 @@
         }
     }
 
+    function createRequestTimeout() {
+        if (typeof AbortController === "undefined") {
+            return {
+                signal: undefined,
+                clear: function () {}
+            };
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REPORT_TIMEOUT_MS);
+        return {
+            signal: controller.signal,
+            clear: function () {
+                clearTimeout(timeoutId);
+            }
+        };
+    }
+
     async function reportDailyActive() {
         if (!isConfigured()) return;
 
         const today = getLocalDay();
         if (hasReportedToday(today)) return;
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), REPORT_TIMEOUT_MS);
+        const timeout = createRequestTimeout();
         try {
             const response = await fetch(`${ANALYTICS_WORKER_BASE_URL.replace(/\/+$/, "")}/analytics/active`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ visitorId: getVisitorId() }),
                 keepalive: true,
-                signal: controller.signal
+                signal: timeout.signal
             });
             if (response.ok) markReportedToday(today);
         } catch (_error) {
             // Best-effort only. Slow or blocked networks should stay invisible.
         } finally {
-            clearTimeout(timeoutId);
+            timeout.clear();
         }
     }
+
+    async function reportSupportClick() {
+        if (!isConfigured()) return;
+
+        const timeout = createRequestTimeout();
+        try {
+            await fetch(`${ANALYTICS_WORKER_BASE_URL.replace(/\/+$/, "")}/analytics/support-click`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ visitorId: getVisitorId() }),
+                keepalive: true,
+                signal: timeout.signal
+            });
+        } catch (_error) {
+            // Best-effort only. The support link should open regardless of analytics.
+        } finally {
+            timeout.clear();
+        }
+    }
+
+    window.handleSupportSiteClick = function () {
+        window.open("https://share.mubu.com/doc/5UcQ7YVxdct", "_blank", "noopener,noreferrer");
+        reportSupportClick();
+    };
 
     function scheduleDailyActiveReport() {
         if (!isConfigured()) return;

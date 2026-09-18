@@ -15,6 +15,8 @@ body{
     overflow:hidden;
     font-family:"Microsoft YaHei",sans-serif;
     background:#f5f5f5;
+    -webkit-text-size-adjust:100%;
+    text-size-adjust:100%;
 }
 
 /* ===========================
@@ -181,6 +183,7 @@ body{
 .typesetLine{
     display:block;
     width:100%;
+    font-size:inherit;
     line-height:inherit;
     padding-block:.06em;
     white-space:nowrap;
@@ -190,6 +193,7 @@ body{
 .typesetLineInner{
     display:inline-block;
     max-width:none;
+    font-size:inherit;
     line-height:inherit;
     white-space:nowrap;
     overflow:visible;
@@ -197,6 +201,39 @@ body{
 
 .typesetToken{
     display:inline;
+    font-size:inherit;
+    line-height:inherit;
+    text-decoration-skip-ink:none;
+}
+
+.typesetDecorationRun{
+    position:relative;
+    display:inline-block;
+    text-decoration:none !important;
+    text-decoration-skip-ink:none;
+}
+
+.typesetDecorationRun::before,
+.typesetDecorationRun::after{
+    content:"";
+    position:absolute;
+    left:0;
+    right:0;
+    display:none;
+    height:1.5px;
+    background:var(--typeset-decoration-color,currentColor);
+    pointer-events:none;
+}
+
+.typesetDecorationRun[data-decoration-lines~="underline"]::after{
+    display:block;
+    bottom:.3em;
+}
+
+.typesetDecorationRun[data-decoration-lines~="line-through"]::before{
+    display:block;
+    top:50%;
+    transform:translateY(-50%);
 }
 
 .posterYear.typesetText::before{
@@ -319,6 +356,25 @@ body{
 
 .posterRoot.hideMonthUnderlines .cardTitle::after{
     display:none;
+}
+
+.paragraphDivider{
+    display:flex;
+    align-items:center;
+    margin:calc(var(--module-spacing,58px) / 2) var(--text-side-spacing,0px);
+    color:var(--text-color,#111111);
+}
+
+.paragraphDivider span{
+    display:block;
+    width:100%;
+    height:1px;
+    background:currentColor;
+    opacity:.18;
+}
+
+.posterRoot .paragraphDivider + .card{
+    margin-top:0;
 }
 
 .posterRoot.hideSideHeader .posterSide{
@@ -460,6 +516,11 @@ body{
     letter-spacing:.03em;
     overflow-wrap:anywhere;
     word-break:break-word;
+    text-decoration-skip-ink:none;
+}
+
+.info *{
+    text-decoration-skip-ink:none;
 }
 
 .info p,
@@ -605,8 +666,8 @@ body.editorCollapsed #dragBar{
 .editorTopActions{
     display:flex;
     align-items:center;
-    gap:8px;
-    justify-content:space-between;
+    gap:6px;
+    justify-content:flex-start;
     min-width:0;
     margin:0 0 14px;
     padding-bottom:12px;
@@ -780,6 +841,9 @@ body.articleManagerOpen .articleManagerPanel{
 .copyStyleCloseBtn{
     width:28px;
     height:28px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
     flex:0 0 auto;
     border:1px solid #d7dce3;
     border-radius:8px;
@@ -869,6 +933,157 @@ body.articleManagerOpen .articleManagerPanel{
     color:#ffffff !important;
 }
 
+.changelogModal[hidden]{
+    display:none;
+}
+
+.changelogModal{
+    position:fixed;
+    inset:0;
+    z-index:1200;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+    background:rgba(17,24,39,.42);
+}
+
+.changelogDialog{
+    width:min(560px,100%);
+    max-height:min(720px,calc(100vh - 48px));
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+    border:1px solid rgba(17,24,39,.12);
+    border-radius:12px;
+    background:#ffffff;
+    box-shadow:0 22px 60px rgba(15,23,42,.24);
+}
+
+.changelogHeader{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:16px;
+    padding:18px 20px 14px;
+    border-bottom:1px solid #eef1f5;
+}
+
+.changelogHeader h3{
+    margin:0 0 6px;
+    color:#111827;
+    font-size:18px;
+    line-height:1.2;
+}
+
+.changelogHeader p{
+    margin:0;
+    color:#6b7280;
+    font-size:13px;
+    line-height:1.4;
+}
+
+.changelogCloseBtn{
+    width:28px;
+    height:28px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    flex:0 0 auto;
+    border:1px solid #d7dce3;
+    border-radius:8px;
+    background:#ffffff;
+    color:#4b5563;
+    font-size:20px;
+    line-height:1;
+    cursor:pointer;
+}
+
+.changelogContent{
+    overflow:auto;
+    padding:4px 20px 18px;
+    color:#374151;
+    font-size:14px;
+    line-height:1.7;
+}
+
+.changelogLoading,
+.changelogError,
+.changelogEmpty{
+    margin:22px 0 4px;
+    color:#6b7280;
+    text-align:center;
+}
+
+.changelogError{
+    color:#b42318;
+}
+
+.changelogVersion{
+    padding:16px 0;
+    border-bottom:1px solid #eef1f5;
+}
+
+.changelogVersion:last-child{
+    border-bottom:none;
+}
+
+.changelogVersion h4{
+    margin:0 0 10px;
+    color:#111827;
+    font-size:15px;
+    line-height:1.35;
+}
+
+.changelogVersion.latest h4::after{
+    content:"最新";
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    margin-left:8px;
+    padding:2px 7px;
+    border-radius:999px;
+    background:#fee2e2;
+    color:#b91c1c;
+    font-size:11px;
+    font-weight:700;
+    line-height:1.2;
+    vertical-align:middle;
+}
+
+.changelogVersion ul{
+    margin:0;
+    padding-left:1.25em;
+}
+
+.changelogVersion li{
+    margin:0 0 6px;
+}
+
+.changelogVersion p{
+    margin:0 0 8px;
+}
+
+.changelogActions{
+    display:flex;
+    justify-content:flex-end;
+    gap:10px;
+    padding:14px 20px 18px;
+    border-top:1px solid #eef1f5;
+}
+
+.changelogActions button{
+    height:34px;
+    padding:0 14px;
+    border:1px solid #111827;
+    border-radius:8px;
+    background:#111827;
+    color:#ffffff;
+    font-size:13px;
+    font-weight:700;
+    cursor:pointer;
+}
+
 .editorHeaderActions{
     display:flex;
     align-items:center;
@@ -890,9 +1105,11 @@ body.articleManagerOpen .articleManagerPanel{
 #bottomWatermarkToggleBtn,
 #monthTitleToggleBtn,
 #underlineToggleBtn,
+#paragraphDividerToggleBtn,
 #sideHeaderToggleBtn,
 #subtitlePositionToggleBtn,
 #phonePreviewToggleBtn,
+#changelogBtn,
 #donateBtn{
     padding:7px 14px;
     font-size:13px;
@@ -910,9 +1127,11 @@ body.articleManagerOpen .articleManagerPanel{
 #bottomWatermarkToggleBtn:hover,
 #monthTitleToggleBtn:hover,
 #underlineToggleBtn:hover,
+#paragraphDividerToggleBtn:hover,
 #sideHeaderToggleBtn:hover,
 #subtitlePositionToggleBtn:hover,
 #phonePreviewToggleBtn:hover,
+#changelogBtn:hover,
 #donateBtn:hover{
     background:#f8fafc;
     border-color:#cbd5e1;
@@ -922,9 +1141,17 @@ body.articleManagerOpen .articleManagerPanel{
 }
 
 #articleManagerBtn{
+    margin-left:auto;
     padding:7px 14px;
     font-size:13px;
     line-height:1.25;
+    font-weight:700;
+}
+
+#changelogBtn{
+    padding:4px 9px;
+    font-size:11px;
+    line-height:1.2;
     font-weight:700;
 }
 
@@ -1305,12 +1532,6 @@ body.articleManagerOpen .articleManagerPanel{
     white-space:pre-wrap;
 }
 
-.fontControl{
-    display:flex;
-    gap:8px;
-    align-items:center;
-}
-
 .fontSelect{
     width:100%;
     min-width:0;
@@ -1381,13 +1602,6 @@ body.articleManagerOpen .articleManagerPanel{
     border-color:#e5e7eb;
 }
 
-.fontControl button{
-    flex:0 0 auto;
-    margin:0;
-    padding:10px 12px;
-    white-space:nowrap;
-}
-
 .fontStatus{
     min-height:18px;
     margin-top:8px;
@@ -1411,16 +1625,6 @@ body.articleManagerOpen .articleManagerPanel{
 
 .inlineFontLoader .fontStatus{
     margin-top:0;
-}
-
-.fontLoaderPanel{
-    margin-bottom:10px;
-}
-
-.fontLoaderPanel button{
-    width:100%;
-    margin:0;
-    padding:10px 12px;
 }
 
 .spacingControls{
@@ -1461,6 +1665,14 @@ body.articleManagerOpen .articleManagerPanel{
     margin-bottom:0;
     padding:8px 10px;
     font-size:14px;
+}
+
+.mobileStepper{
+    display:block;
+}
+
+.mobileStepperButton{
+    display:none;
 }
 
 .bgPalette{
@@ -1616,6 +1828,15 @@ body.articleManagerOpen .articleManagerPanel{
     cursor:pointer;
 }
 
+.customColorPanel.richTextColorMode .customColorActions{
+    grid-template-columns:2fr 1fr 1fr;
+}
+
+.customColorResetGlobal{
+    background:#ffffff;
+    color:#374151;
+}
+
 .customColorCancel{
     background:#ffffff;
     color:#374151;
@@ -1627,6 +1848,7 @@ body.articleManagerOpen .articleManagerPanel{
     color:#ffffff;
 }
 
+.customColorResetGlobal:hover,
 .customColorCancel:hover{
     border-color:#b8c4d6;
     background:#f8fafc;
@@ -1819,6 +2041,14 @@ button:hover{
 }
 
 .mobileCurrentWordCount{
+    display:none;
+}
+
+.mobilePreviewToolbar{
+    display:none;
+}
+
+.mobileFontDebugBtn{
     display:none;
 }
 
@@ -2431,9 +2661,46 @@ button:hover{
     line-height:1;
 }
 
+.richTextColorButton{
+    position:relative;
+    width:30px;
+    height:30px;
+    flex:0 0 30px;
+    padding:0;
+    margin:0;
+    border-radius:8px;
+    overflow:hidden;
+    color:#111827;
+    font-size:16px;
+    font-weight:700;
+    background:#ffffff;
+}
+
+.richTextColorButton::after{
+    content:"";
+    position:absolute;
+    left:6px;
+    right:6px;
+    bottom:5px;
+    height:4px;
+    border-radius:999px;
+    background:#111111;
+}
+
+.customColorPanel.richTextFloatingColorPanel{
+    position:fixed;
+    z-index:3200;
+    margin-top:0;
+}
+
+.customColorPanel.richTextFloatingColorPanel::before{
+    left:calc(var(--rich-text-panel-anchor-x, 24px) - 5px);
+    right:auto;
+}
+
 .richTextFontSelect{
     width:auto;
-    min-width:148px;
+    min-width:120px;
     max-width:100%;
     height:30px;
     padding:4px 8px;
@@ -2453,6 +2720,11 @@ button:hover{
     white-space:pre-wrap;
     overflow-wrap:anywhere;
     word-break:break-word;
+    text-decoration-skip-ink:none;
+}
+
+.richTextEditor *{
+    text-decoration-skip-ink:none;
 }
 
 .richTextEditor:empty::before{
@@ -2508,6 +2780,25 @@ button:hover{
         overflow-y:auto;
         overflow-x:hidden;
         background:#f5f5f5;
+    }
+
+    body.mobilePosterPreviewMode #preview{
+        flex:1 1 auto;
+    }
+
+    .mobilePreviewToolbar{
+        position:sticky;
+        top:0;
+        z-index:25;
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:12px;
+        min-height:44px;
+        padding:6px 12px;
+        border-bottom:1px solid rgba(226,232,240,.92);
+        background:rgba(245,245,245,.96);
+        backdrop-filter:blur(8px);
     }
 
     .posterRoot{
@@ -2575,12 +2866,14 @@ button:hover{
         display:none;
     }
 
-    .mobileTypesetRefreshBtn{
-        position:fixed;
-        top:calc(env(safe-area-inset-top,0px) + 12px);
-        right:12px;
-        z-index:30;
-        display:none;
+    .mobileTypesetRefreshBtn,
+    .mobileFontDebugBtn{
+        position:static;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        flex:0 0 auto;
+        min-width:64px;
         min-height:38px;
         padding:0 14px;
         border:1px solid rgba(148,163,184,.35);
@@ -2594,15 +2887,12 @@ button:hover{
 
     .mobileTypesetRefreshBtn.visible{
         display:inline-flex;
-        align-items:center;
-        justify-content:center;
     }
 
-    .mobileTypesetRefreshBtn.dirty{
-        color:#ffffff;
-        border-color:rgba(47,95,187,.25);
-        background:#2f5fbb;
-        box-shadow:0 8px 18px rgba(15,23,42,.2);
+    .mobileFontDebugBtn{
+        display:none !important;
+        min-width:52px;
+        padding:0 12px;
     }
 
     .mobileTypesetRefreshBtn:disabled{
@@ -2615,15 +2905,16 @@ button:hover{
     }
 
     .mobileCurrentWordCount{
-        position:fixed;
-        top:calc(env(safe-area-inset-top,0px) + 58px);
-        right:12px;
-        z-index:30;
         display:block;
+        flex:0 1 auto;
         width:auto;
         min-width:118px;
+        max-width:58vw;
+        margin:0;
         padding:7px 11px;
+        border-radius:999px;
         font-size:13px;
+        box-shadow:none;
     }
 
     #phonePreviewToggleBtn,
@@ -2653,6 +2944,10 @@ button:hover{
 
     body.editorCollapsed #editor{
         display:block;
+    }
+
+    body.mobilePosterPreviewMode #editor{
+        display:none;
     }
 
     #editor::before{
@@ -2809,12 +3104,14 @@ button:hover{
         display:grid;
     }
 
-    .copyStyleModal{
+    .copyStyleModal,
+    .changelogModal{
         align-items:flex-end;
         padding:12px;
     }
 
-    .copyStyleDialog{
+    .copyStyleDialog,
+    .changelogDialog{
         max-height:calc(var(--app-viewport-height,100vh) - 24px);
     }
 
@@ -2824,12 +3121,23 @@ button:hover{
     }
 
     .richTextBox{
-        max-height:none;
-        overflow:visible;
+        max-height:52vh;
+        display:flex;
+        flex-direction:column;
+        overflow:hidden;
     }
 
     .richTextToolbar{
-        position:static;
+        position:relative;
+        top:auto;
+        flex:0 0 auto;
+    }
+
+    .richTextEditor{
+        flex:1 1 auto;
+        min-height:180px;
+        overflow-y:auto;
+        -webkit-overflow-scrolling:touch;
     }
 
     .editItem,
@@ -2862,9 +3170,51 @@ button:hover{
         grid-template-columns:1fr;
     }
 
-    .fontControl{
-        align-items:stretch;
-        flex-direction:column;
+    .spacingControls .mobileStepperField,
+    .blockSpacingControls .mobileStepperField{
+        display:grid;
+        grid-template-columns:minmax(72px,auto) minmax(0,1fr);
+        gap:10px;
+        align-items:center;
+    }
+
+    .spacingControls .mobileStepperField{
+        grid-template-columns:112px minmax(0,1fr);
+    }
+
+    .spacingControls .mobileStepper,
+    .blockSpacingControls .mobileStepper{
+        display:grid;
+        grid-template-columns:40px minmax(0,1fr) 40px;
+        gap:6px;
+        align-items:center;
+        margin:0;
+    }
+
+    .spacingControls .mobileStepperButton,
+    .blockSpacingControls .mobileStepperButton{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        width:40px;
+        height:38px;
+        margin:0;
+        padding:0;
+        border:1px solid #d1d5db;
+        border-radius:8px;
+        background:#f8fafc;
+        color:#111827;
+        font-size:18px;
+        font-weight:700;
+        line-height:1;
+    }
+
+    .spacingControls .mobileStepperInput,
+    .blockSpacingControls .mobileStepperInput{
+        width:100%;
+        min-width:0;
+        margin:0;
+        text-align:center;
     }
 
     .headlineFontRow{

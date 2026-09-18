@@ -19,6 +19,7 @@
             escapeHtml,
             plainTextToRichText,
             sanitizeRichText,
+            normalizeColorValue,
             normalizeTextAlign,
             renderRichTextPreview,
             renderTextAlignControls,
@@ -26,7 +27,8 @@
             resolveCardContentFontFamily,
             getItemLineSpacing,
             getItemParagraphSpacing,
-            renderFontOptionElements
+            renderFontOptionElements,
+            getTextColor
         } = deps;
 
         function createTextCard(overrides = {}) {
@@ -40,6 +42,7 @@
                 titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
                 contentFontFamily: INHERIT_FONT_VALUE,
                 contentFontToolbarValue: INHERIT_FONT_VALUE,
+                contentColor: "",
                 titleAlign: "left",
                 textAlign: "left",
                 hidden: false,
@@ -151,6 +154,7 @@
                     contentFontToolbarValue: typeof item.contentFontToolbarValue === "string"
                         ? item.contentFontToolbarValue
                         : (typeof item.contentFontFamily === "string" ? item.contentFontFamily : INHERIT_FONT_VALUE),
+                    contentColor: normalizeColorValue(item.contentColor),
                     textAlign: normalizeTextAlign(item.textAlign)
                 });
             });
@@ -337,7 +341,7 @@
         <div class="card" data-card-index="${index}" data-card-type="text" style="${cardStyle}">
             ${titleHtml}
             <div class="cardContent">
-                <div class="info" data-text-align="${textAlign}" style="font-size:${item.textSize * previewFontScale}px;font-family:${escapeHtml(resolveCardContentFontFamily(item))};--content-line-height:${itemLineSpacing};--content-paragraph-spacing:${itemParagraphSpacing}px;text-align:${textAlign};">${textHtml}</div>
+                <div class="info" data-text-align="${textAlign}" style="font-size:${item.textSize * previewFontScale}px;font-family:${escapeHtml(resolveCardContentFontFamily(item))};${item.contentColor ? `color:${escapeHtml(item.contentColor)};` : ""}--content-line-height:${itemLineSpacing};--content-paragraph-spacing:${itemParagraphSpacing}px;text-align:${textAlign};">${textHtml}</div>
             </div>
         </div>
         `;
@@ -346,6 +350,7 @@
         function renderTextCardEditorBody(item, index, textHtml, contentFontOptions, contentFontToolbarValue) {
             const itemLineSpacing = getItemLineSpacing(item);
             const itemParagraphSpacing = getItemParagraphSpacing(item);
+            const contentColorValue = item.contentColor || getTextColor();
 
             return `
             <div class="blockSizeControlRow">
@@ -359,13 +364,21 @@
                 ${renderTextAlignControls(`cardText:${index}`, item.textAlign)}
             </div>
             <div class="blockSpacingControls">
-                <label for="lineSpacingInput-${index}">
-                    行间距
-                    <input type="number" id="lineSpacingInput-${index}" min="1" max="3" step="0.1" value="${itemLineSpacing}" oninput="changeLineSpacing(${index},this.value)">
+                <label class="mobileStepperField" for="lineSpacingInput-${index}">
+                    <span>行间距</span>
+                    <span class="mobileStepper">
+                        <button class="mobileStepperButton" type="button" aria-label="减小行间距" onclick="adjustMobileNumberInput('lineSpacingInput-${index}',-1)">-</button>
+                        <input class="mobileStepperInput" type="number" id="lineSpacingInput-${index}" min="1" max="3" step="0.1" value="${itemLineSpacing}" oninput="changeLineSpacing(${index},this.value)">
+                        <button class="mobileStepperButton" type="button" aria-label="增大行间距" onclick="adjustMobileNumberInput('lineSpacingInput-${index}',1)">+</button>
+                    </span>
                 </label>
-                <label for="paragraphSpacingInput-${index}">
-                    段间距
-                    <input type="number" id="paragraphSpacingInput-${index}" min="0" max="80" step="2" value="${itemParagraphSpacing}" oninput="changeParagraphSpacing(${index},this.value)">
+                <label class="mobileStepperField" for="paragraphSpacingInput-${index}">
+                    <span>段间距</span>
+                    <span class="mobileStepper">
+                        <button class="mobileStepperButton" type="button" aria-label="减小段间距" onclick="adjustMobileNumberInput('paragraphSpacingInput-${index}',-1)">-</button>
+                        <input class="mobileStepperInput" type="number" id="paragraphSpacingInput-${index}" min="0" max="80" step="2" data-mobile-step="1" value="${itemParagraphSpacing}" oninput="changeParagraphSpacing(${index},this.value)">
+                        <button class="mobileStepperButton" type="button" aria-label="增大段间距" onclick="adjustMobileNumberInput('paragraphSpacingInput-${index}',1)">+</button>
+                    </span>
                 </label>
             </div>
             <div class="richTextBox">
@@ -374,6 +387,15 @@
                     <button type="button" title="斜体" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'italic')"><em>I</em></button>
                     <button type="button" title="下划线" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'underline')"><u>U</u></button>
                     <button type="button" title="删除线" onmousedown="event.preventDefault()" onclick="formatCardText(${index}, 'strikeThrough')"><s>S</s></button>
+                    <button
+                        type="button"
+                        class="richTextColorButton"
+                        title="选中文字颜色"
+                        aria-label="选中文字颜色"
+                        onmousedown="event.preventDefault()"
+                        onclick="openRichTextColorPicker(${index},this)">
+                        A
+                    </button>
                     <select
                         class="fontSelect richTextFontSelect"
                         style="font-family:${escapeHtml(contentFontToolbarValue === INHERIT_FONT_VALUE ? resolveCardContentFontFamily(item) : contentFontToolbarValue)};"
@@ -388,7 +410,7 @@
                     class="richTextEditor"
                     contenteditable="true"
                     data-placeholder="输入段落内容..."
-                    style="font-family:${escapeHtml(resolveCardContentFontFamily(item))};"
+                    style="font-family:${escapeHtml(resolveCardContentFontFamily(item))};color:${escapeHtml(contentColorValue)};"
                     oninput="changeText(${index},this.innerHTML)"
                     onblur="normalizeRichTextEditorPlaceholder(this)"
                     onfocus="saveRichTextSelection(${index})"
@@ -468,9 +490,13 @@
             </div>
             <div class="cardImageUploadHint">请上传6MB以下的图片</div>
             <div class="blockSpacingControls">
-                <label for="paragraphSpacingInput-${index}">
-                    段间距
-                    <input type="number" id="paragraphSpacingInput-${index}" min="0" max="80" step="2" value="${itemParagraphSpacing}" oninput="changeParagraphSpacing(${index},this.value)">
+                <label class="mobileStepperField" for="paragraphSpacingInput-${index}">
+                    <span>段间距</span>
+                    <span class="mobileStepper">
+                        <button class="mobileStepperButton" type="button" aria-label="减小段间距" onclick="adjustMobileNumberInput('paragraphSpacingInput-${index}',-1)">-</button>
+                        <input class="mobileStepperInput" type="number" id="paragraphSpacingInput-${index}" min="0" max="80" step="2" data-mobile-step="1" value="${itemParagraphSpacing}" oninput="changeParagraphSpacing(${index},this.value)">
+                        <button class="mobileStepperButton" type="button" aria-label="增大段间距" onclick="adjustMobileNumberInput('paragraphSpacingInput-${index}',1)">+</button>
+                    </span>
                 </label>
                 <div class="cardImageEditorActions cardImageSpacingActions">
                     <button type="button" onclick="openCardImagePicker(${index})">${images.length ? "继续添加" : "上传图片"}</button>

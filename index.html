@@ -27,6 +27,7 @@
 
         html.unsupported-browser #customColorModalBackdrop,
         html.unsupported-browser #copyStyleModal,
+        html.unsupported-browser #changelogModal,
         html.unsupported-browser #articleManagerBackdrop,
         html.unsupported-browser #preview,
         html.unsupported-browser #phoneRenderHost,
@@ -65,7 +66,7 @@
             line-height:1.7;
         }
     </style>
-    <link rel="stylesheet" href="style.css?v=90">
+    <link rel="stylesheet" href="style.css?v=123">
 </head>
 <body>
     <div id="unsupportedBrowserNotice" class="unsupportedBrowserNotice" role="alert">
@@ -90,8 +91,30 @@
             </div>
         </div>
     </div>
+    <div id="changelogModal" class="changelogModal" hidden role="dialog" aria-modal="true" aria-labelledby="changelogModalTitle">
+        <div class="changelogDialog">
+            <div class="changelogHeader">
+                <div>
+                    <h3 id="changelogModalTitle">更新日志</h3>
+                    <p id="changelogModalSubtitle">最新更新会显示在最上方</p>
+                </div>
+                <button type="button" class="changelogCloseBtn" aria-label="关闭" onclick="closeChangelogModal()">×</button>
+            </div>
+            <div id="changelogContent" class="changelogContent" aria-live="polite">
+                <p class="changelogLoading">正在加载更新日志...</p>
+            </div>
+            <div class="changelogActions">
+                <button type="button" onclick="closeChangelogModal()">知道了</button>
+            </div>
+        </div>
+    </div>
     <div id="articleManagerBackdrop" class="articleManagerBackdrop" hidden></div>
     <div id="preview">
+        <div id="mobilePreviewToolbar" class="mobilePreviewToolbar" aria-label="手机预览工具栏">
+            <button id="mobileTypesetRefreshBtn" class="mobileTypesetRefreshBtn" type="button" onclick="toggleMobilePreviewMode()">预览</button>
+            <button id="mobileFontDebugBtn" class="mobileFontDebugBtn" type="button" onclick="debugMobileFontMetrics()">调试</button>
+            <div class="currentWordCount mobileCurrentWordCount" data-current-word-count aria-live="polite">当前字符数：0</div>
+        </div>
         <div id="posterTypesettingOverlay" class="posterTypesettingOverlay visible" aria-hidden="false">
             <div class="posterTypesettingMessage">正在排版...</div>
         </div>
@@ -114,9 +137,6 @@
         <button id="previewExportSlicesBtn" class="previewExportBtn secondary" type="button" onclick="exportSlicedImagesZip()">导出已切图</button>
     </div>
 
-    <button id="mobileTypesetRefreshBtn" class="mobileTypesetRefreshBtn" type="button" onclick="refreshMobileTypesetting()">刷新排版</button>
-    <div class="currentWordCount mobileCurrentWordCount" data-current-word-count aria-live="polite">当前字符数：0</div>
-
     <div id="dragBar">
         <button id="editorCollapseBtn" type="button" title="收起编辑器" aria-label="收起编辑器" onclick="toggleEditorCollapsed(event)">›</button>
     </div>
@@ -125,7 +145,8 @@
         <div class="mobileExportWarning">如果字符数大于7000，请不要在手机端导出图片</div>
 
         <div class="editorTopActions" data-mobile-panel="article">
-            <button id="donateBtn" type="button" aria-label="支持网站" title="支持网站" onclick="window.open('https://share.mubu.com/doc/5UcQ7YVxdct','_blank','noopener,noreferrer')">支持网站</button>
+            <button id="donateBtn" type="button" aria-label="支持网站" title="支持网站" onclick="if(window.handleSupportSiteClick){window.handleSupportSiteClick();}else{window.open('https://share.mubu.com/doc/5UcQ7YVxdct','_blank','noopener,noreferrer');}">支持网站</button>
+            <button id="changelogBtn" type="button" onclick="openChangelogModal()">更新日志</button>
             <button id="articleManagerBtn" type="button" onclick="openArticleManagerModal()">文章管理</button>
         </div>
 
@@ -195,8 +216,9 @@
                         <label>B <input type="number" id="textBlueInput" min="0" max="255" value="17"></label>
                     </div>
                     <div class="customColorActions">
+                        <button type="button" class="customColorResetGlobal" onclick="resetRichTextColorFromPicker()" hidden>恢复全局颜色</button>
                         <button type="button" class="customColorCancel" onclick="cancelTextCustomColor()">取消</button>
-                        <button type="button" class="customColorApply" onclick="confirmTextCustomColor()">确认颜色</button>
+                        <button type="button" class="customColorApply" onclick="confirmTextCustomColor()">确认</button>
                     </div>
                 </div>
             </div>
@@ -239,25 +261,45 @@
 
         <div class="editItem" data-mobile-panel="style">
             <div class="spacingControls">
-                <label for="sideSpacingInput">
-                    两侧间距
-                    <input type="number" id="sideSpacingInput" min="-120" max="240" step="2" value="0">
+                <label class="mobileStepperField" for="sideSpacingInput">
+                    <span>两侧间距</span>
+                    <span class="mobileStepper">
+                        <button class="mobileStepperButton" type="button" aria-label="减小两侧间距" onclick="adjustMobileNumberInput('sideSpacingInput',-1)">-</button>
+                        <input class="mobileStepperInput" type="number" id="sideSpacingInput" min="-120" max="240" step="2" data-mobile-step="1" value="0">
+                        <button class="mobileStepperButton" type="button" aria-label="增大两侧间距" onclick="adjustMobileNumberInput('sideSpacingInput',1)">+</button>
+                    </span>
                 </label>
-                <label for="paragraphTitleSpacingInput">
-                    段落标题间距
-                    <input type="number" id="paragraphTitleSpacingInput" min="-40" max="80" step="1" value="0">
+                <label class="mobileStepperField" for="paragraphTitleSpacingInput">
+                    <span>段落标题间距</span>
+                    <span class="mobileStepper">
+                        <button class="mobileStepperButton" type="button" aria-label="减小段落标题间距" onclick="adjustMobileNumberInput('paragraphTitleSpacingInput',-1)">-</button>
+                        <input class="mobileStepperInput" type="number" id="paragraphTitleSpacingInput" min="-40" max="80" step="1" data-mobile-step="1" value="0">
+                        <button class="mobileStepperButton" type="button" aria-label="增大段落标题间距" onclick="adjustMobileNumberInput('paragraphTitleSpacingInput',1)">+</button>
+                    </span>
                 </label>
-                <label for="moduleSpacingInput">
-                    模块间距
-                    <input type="number" id="moduleSpacingInput" min="0" max="160" step="2" value="58">
+                <label class="mobileStepperField" for="moduleSpacingInput">
+                    <span>模块间距</span>
+                    <span class="mobileStepper">
+                        <button class="mobileStepperButton" type="button" aria-label="减小模块间距" onclick="adjustMobileNumberInput('moduleSpacingInput',-1)">-</button>
+                        <input class="mobileStepperInput" type="number" id="moduleSpacingInput" min="0" max="160" step="2" data-mobile-step="1" value="58">
+                        <button class="mobileStepperButton" type="button" aria-label="增大模块间距" onclick="adjustMobileNumberInput('moduleSpacingInput',1)">+</button>
+                    </span>
                 </label>
-                <label for="topPaddingInput">
-                    图片顶部预留
-                    <input type="number" id="topPaddingInput" min="0" max="240" step="2" value="58">
+                <label class="mobileStepperField" for="topPaddingInput">
+                    <span>图片顶部预留</span>
+                    <span class="mobileStepper">
+                        <button class="mobileStepperButton" type="button" aria-label="减小图片顶部预留" onclick="adjustMobileNumberInput('topPaddingInput',-1)">-</button>
+                        <input class="mobileStepperInput" type="number" id="topPaddingInput" min="0" max="240" step="2" data-mobile-step="1" value="58">
+                        <button class="mobileStepperButton" type="button" aria-label="增大图片顶部预留" onclick="adjustMobileNumberInput('topPaddingInput',1)">+</button>
+                    </span>
                 </label>
-                <label for="sideHeaderReserveInput">
-                    竖排标题右侧预留
-                    <input type="number" id="sideHeaderReserveInput" min="0" max="240" step="2" value="0">
+                <label class="mobileStepperField" for="sideHeaderReserveInput">
+                    <span>竖排标题右侧预留</span>
+                    <span class="mobileStepper">
+                        <button class="mobileStepperButton" type="button" aria-label="减小竖排标题右侧预留" onclick="adjustMobileNumberInput('sideHeaderReserveInput',-1)">-</button>
+                        <input class="mobileStepperInput" type="number" id="sideHeaderReserveInput" min="0" max="240" step="2" data-mobile-step="1" value="0">
+                        <button class="mobileStepperButton" type="button" aria-label="增大竖排标题右侧预留" onclick="adjustMobileNumberInput('sideHeaderReserveInput',1)">+</button>
+                    </span>
                 </label>
             </div>
         </div>
@@ -317,6 +359,7 @@
             <button id="timelineToggleBtn" type="button" onclick="toggleTimeline()">隐藏时间轴</button>
             <button id="monthTitleToggleBtn" type="button" onclick="toggleMonthTitles()">隐藏段落标题</button>
             <button id="underlineToggleBtn" type="button" onclick="toggleMonthUnderlines()">隐藏段落标题横线</button>
+            <button id="paragraphDividerToggleBtn" type="button" onclick="toggleParagraphDividers()">显示段落分割线</button>
         </div>
 
         <div id="cardEditor" data-mobile-panel="blocks"></div>
@@ -373,12 +416,14 @@
             var scripts = [
                 "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
                 "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
-                "paragraphs.js?v=20260901-4",
+                "paragraphs.js?v=20260916-1",
                 "image-store.js?v=20260826-1",
-                "layout.js?v=20260910-1",
-                "export.js?v=20260910-1",
-                "script.js?v=20260910-9",
-                "analytics.js?v=20260910-1"
+                "layout.js?v=20260916-1",
+                "export.js?v=20260916-1",
+                "article-workspace.js?v=20260916-1",
+                "rich-text-editor.js?v=20260916-6",
+                "script.js?v=20260916-6",
+                "analytics.js?v=20260915-1"
             ];
 
             function loadScript(index) {

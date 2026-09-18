@@ -88,6 +88,7 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
                     clonedPoster.classList.toggle("noTimeline", !showTimeline);
                     clonedPoster.classList.toggle("hideMonthTitles", !showMonthTitles);
                     clonedPoster.classList.toggle("hideMonthUnderlines", !showMonthUnderlines);
+                    clonedPoster.classList.toggle("showParagraphDividers", showParagraphDividers);
                     clonedPoster.classList.toggle("hideSideHeader", !showSideHeader);
                     clonedPoster.classList.toggle("hideYearShadow", !showYearShadow);
                     clonedPoster.classList.toggle("subtitleVerticalLeft", subtitlePosition === "verticalLeft");
@@ -706,9 +707,22 @@ function getProtectedImageRanges(sourceCanvas, poster = document.getElementById(
     }));
 }
 
+function getProtectedDividerRanges(sourceCanvas, poster = document.getElementById("poster")) {
+    const scale = getCanvasScale(sourceCanvas, poster);
+    const padding = Math.max(2, Math.round(3 * scale));
+
+    return getElementCanvasRanges(
+        (poster && poster.querySelectorAll(".paragraphDivider")) || [],
+        sourceCanvas,
+        padding,
+        poster
+    );
+}
+
 function getExpectedPosterInkRanges(sourceCanvas, poster = document.getElementById("poster")) {
     return [
         ...getProtectedTextRanges(sourceCanvas, poster),
+        ...getProtectedDividerRanges(sourceCanvas, poster),
         ...getProtectedImageRanges(sourceCanvas, poster)
     ].sort((a, b) => a.top - b.top);
 }
@@ -716,7 +730,7 @@ function getExpectedPosterInkRanges(sourceCanvas, poster = document.getElementBy
 function getSlicedExportContentBottom(sourceCanvas, poster = document.getElementById("poster")) {
     if (!(sourceCanvas && sourceCanvas.height) || !poster) return (sourceCanvas && sourceCanvas.height) || 1;
 
-    const selectors = [".posterYear", ".posterSubtitle", ".posterSide", ".card"];
+    const selectors = [".posterYear", ".posterSubtitle", ".posterSide", ".card", ".paragraphDivider"];
     const posterRect = poster.getBoundingClientRect();
     const scale = getCanvasScale(sourceCanvas, poster);
     const visibleBottoms = selectors.flatMap((selector) =>
@@ -819,8 +833,8 @@ function createCanvasInkDetector(sourceCanvas, poster = document.getElementById(
 
     const scanColumns = getTextScanColumns(sourceCanvas, poster);
     const scannedWidth = scanColumns.reduce((total, column) => total + column.right - column.left, 0);
-    const minInkPixels = Math.max(3, Math.round(scannedWidth * 0.001));
-    const colorThreshold = 18;
+    const minInkPixels = Math.max(1, Math.round(scannedWidth * 0.0006));
+    const colorThreshold = 10;
 
     if (precomputeRows) {
         const rowInkCounts = new Uint16Array(sourceCanvas.height);
@@ -964,6 +978,40 @@ function findNearestSafeCutY(idealCutY, minCutY, protectedRanges, hasInkAtRow, c
     return null;
 }
 
+function findNearestCanvasCleanCutY(idealCutY, minCutY, hasInkAtRow, clearance, maxBacktrack) {
+    if (!hasInkAtRow) return null;
+
+    const lowestCutY = Math.max(minCutY, Math.floor(idealCutY - maxBacktrack));
+    for (let y = Math.floor(idealCutY); y >= lowestCutY; y -= 1) {
+        if (!isCanvasInkCutBand(y, hasInkAtRow, clearance)) {
+            return y;
+        }
+    }
+
+    return null;
+}
+
+function enforceCanvasCleanCutHeight(candidateHeight, sourceY, maxContentHeight, hasInkAtRow, scale) {
+    if (!hasInkAtRow) return candidateHeight;
+
+    const cutY = sourceY + candidateHeight;
+    const clearance = Math.max(8, Math.round(14 * scale));
+    if (!isCanvasInkCutBand(cutY, hasInkAtRow, clearance)) {
+        return candidateHeight;
+    }
+
+    const minCutY = sourceY + Math.max(1, Math.round(12 * scale));
+    const cleanCutY = findNearestCanvasCleanCutY(
+        cutY,
+        minCutY,
+        hasInkAtRow,
+        clearance,
+        getCutBacktrackLimit(scale, maxContentHeight)
+    );
+
+    return cleanCutY === null ? candidateHeight : Math.max(1, cleanCutY - sourceY);
+}
+
 function getLineBoundaryFallbackCutY(idealCutY, minCutY, protectedRanges, clearance, maxBacktrack) {
     const cutY = Math.floor(idealCutY);
     const blockingRanges = protectedRanges.filter((range) => cutY + clearance > range.top && cutY - clearance < range.bottom);
@@ -1056,23 +1104,6 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
         ...unsplittableImageRanges
     ].sort((a, b) => a.top - b.top);
 
-    const textSafeCutY = findNearestSafeCutY(
-        idealCutY,
-        minCutY,
-        fallbackCutRanges,
-        null,
-        0,
-        maxBacktrack
-    );
-
-    if (textSafeCutY !== null && (safeCutY === null || textSafeCutY > safeCutY)) {
-        return Math.max(1, textSafeCutY - sourceY);
-    }
-
-    if (safeCutY !== null) {
-        return Math.max(1, safeCutY - sourceY);
-    }
-
     const tightTextSafeCutY = tightFallbackCutRanges
         ? findNearestSafeCutY(
             idealCutY,
@@ -1084,14 +1115,49 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
         )
         : null;
 
-    if (tightTextSafeCutY !== null) {
-        return Math.max(1, tightTextSafeCutY - sourceY);
+    if (tightTextSafeCutY !== null && (safeCutY === null || tightTextSafeCutY > safeCutY)) {
+        return enforceCanvasCleanCutHeight(
+            Math.max(1, tightTextSafeCutY - sourceY),
+            sourceY,
+            maxContentHeight,
+            hasInkAtRow,
+            scale
+        );
+    }
+
+    const textSafeCutY = findNearestSafeCutY(
+        idealCutY,
+        minCutY,
+        fallbackCutRanges,
+        null,
+        0,
+        maxBacktrack
+    );
+
+    if (safeCutY !== null) {
+        return Math.max(1, safeCutY - sourceY);
+    }
+
+    if (textSafeCutY !== null) {
+        return enforceCanvasCleanCutHeight(
+            Math.max(1, textSafeCutY - sourceY),
+            sourceY,
+            maxContentHeight,
+            hasInkAtRow,
+            scale
+        );
     }
 
     const fallbackCutY = getLineBoundaryFallbackCutY(idealCutY, minCutY, protectedRanges, clearance, maxBacktrack);
 
     if (fallbackCutY !== null) {
-        return Math.max(1, fallbackCutY - sourceY);
+        return enforceCanvasCleanCutHeight(
+            Math.max(1, fallbackCutY - sourceY),
+            sourceY,
+            maxContentHeight,
+            hasInkAtRow,
+            scale
+        );
     }
 
     const blockingFallbackImage = unsplittableImageRanges.find((range) =>
@@ -1107,16 +1173,13 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
     );
     if (fallbackImageStartCutHeight !== null) return fallbackImageStartCutHeight;
 
-    return maxContentHeight;
-}
-
-function getTimelineCardSliceBounds(sourceCanvas, poster = document.getElementById("poster")) {
-    const scale = getCanvasScale(sourceCanvas, poster);
-    const padding = Math.max(18, Math.round(18 * scale));
-
-    return Array.from((poster && poster.querySelectorAll(".card")) || [])
-        .map((card) => getElementCanvasBounds(card, sourceCanvas, padding, poster))
-        .filter(Boolean);
+    return enforceCanvasCleanCutHeight(
+        maxContentHeight,
+        sourceY,
+        maxContentHeight,
+        hasInkAtRow,
+        scale
+    );
 }
 
 function loadBackgroundImageForCanvas() {
@@ -1378,13 +1441,16 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
     };
     sourceCanvasMetrics.height = getSlicedExportContentBottom(sourceCanvasMetrics, phonePoster);
     const protectedTextRanges = getProtectedTextRanges(sourceCanvasMetrics, phonePoster);
+    const dividerRanges = getProtectedDividerRanges(sourceCanvasMetrics, phonePoster);
     const tightFallbackPadding = Math.max(2, Math.round(2 * exportScale));
     const tightFallbackProtectedRanges = getGeneratedLineContentRanges(
         sourceCanvasMetrics,
         phonePoster,
         tightFallbackPadding
-    );
-    const fallbackProtectedRanges = getGeneratedLineContentRanges(sourceCanvasMetrics, phonePoster, 0);
+    ).concat(dividerRanges).sort((a, b) => a.top - b.top);
+    const fallbackProtectedRanges = getGeneratedLineContentRanges(sourceCanvasMetrics, phonePoster, 0)
+        .concat(dividerRanges)
+        .sort((a, b) => a.top - b.top);
     const watermarkSettings = getWatermarkSettings(exportScale);
     const topPaddingHeight = getExportTopPaddingHeight(resolution, exportScale);
     const watermarkBandHeight = showBottomWatermark
@@ -1397,10 +1463,12 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
     });
     const protectedRanges = [
         ...protectedTextRanges,
+        ...dividerRanges,
         ...imageRanges.filter((range) => !range.canSplit)
     ].sort((a, b) => a.top - b.top);
     const expectedInkRanges = [
         ...protectedTextRanges,
+        ...dividerRanges,
         ...imageRanges
     ].sort((a, b) => a.top - b.top);
     const initialWindowSlices = getSlicedCaptureWindowSlices(posterWidth, exportScale, contentSliceHeight);
