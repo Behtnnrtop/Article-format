@@ -350,8 +350,6 @@
         function renderTextCardEditorBody(item, index, textHtml, contentFontOptions, contentFontToolbarValue) {
             const itemLineSpacing = getItemLineSpacing(item);
             const itemParagraphSpacing = getItemParagraphSpacing(item);
-            const contentColorValue = item.contentColor || getTextColor();
-
             return `
             <div class="blockSizeControlRow">
                 <label class="inlineLabel">内容 <span class="sizeValue" data-card-index="${index}" data-size-type="text">${item.textSize}px</span></label>
@@ -410,7 +408,7 @@
                     class="richTextEditor"
                     contenteditable="true"
                     data-placeholder="输入段落内容..."
-                    style="font-family:${escapeHtml(resolveCardContentFontFamily(item))};color:${escapeHtml(contentColorValue)};"
+                    style="font-family:${escapeHtml(resolveCardContentFontFamily(item))};"
                     oninput="changeText(${index},this.innerHTML)"
                     onblur="normalizeRichTextEditorPlaceholder(this)"
                     onfocus="saveRichTextSelection(${index})"

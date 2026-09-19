@@ -2716,6 +2716,7 @@ button:hover{
     font-size:15px;
     outline:none;
     background:#ffffff;
+    color:#111827;
     line-height:1.7;
     white-space:pre-wrap;
     overflow-wrap:anywhere;
@@ -2724,6 +2725,7 @@ button:hover{
 }
 
 .richTextEditor *{
+    color:inherit !important;
     text-decoration-skip-ink:none;
 }
 

@@ -677,7 +677,6 @@
             if (!editorEl || !data[index] || !selectedValue) return false;
 
             data[index].contentColor = selectedValue;
-            editorEl.style.color = selectedValue;
             finishRichTextEditorChange(index, editorEl);
             return true;
         }
@@ -698,7 +697,6 @@
                 data[index].contentColor = "";
                 clearRichTextColorStyles(editorEl);
                 unwrapEmptyRichTextSpans(editorEl);
-                editorEl.style.color = deps.getTextColor();
             }
 
             finishRichTextEditorChange(index, editorEl);
@@ -719,7 +717,6 @@
                 data[context.index].contentColor = "";
                 clearRichTextColorStyles(editorEl);
                 unwrapEmptyRichTextSpans(editorEl);
-                editorEl.style.color = deps.getTextColor();
             }
 
             finishRichTextEditorChange(context.index, editorEl);
