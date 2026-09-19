@@ -220,6 +220,23 @@
             return true;
         }
 
+        function wrapRichTextRangeInRoot(root, range, styleProperty, styleValue) {
+            if (!root || !range || range.collapsed) return false;
+
+            const boundedRange = splitRichTextRangeBoundaries(range);
+            const textNodes = getRichTextRangeTextNodes(boundedRange, root);
+            if (!textNodes.length) return false;
+
+            textNodes.forEach((textNode) => {
+                const span = root.ownerDocument.createElement("span");
+                span.style[styleProperty] = styleValue;
+                textNode.parentNode.insertBefore(span, textNode);
+                span.appendChild(textNode);
+            });
+
+            return true;
+        }
+
         function getRichTextSelectionOffsets(editorEl) {
             const selection = window.getSelection();
             if (!editorEl || !selection || selection.rangeCount === 0) return null;
@@ -441,6 +458,32 @@
             restoreRichTextSelectionOffsets(editorEl, nextSelectionOffsets);
             saveRichTextSelection(index);
             deps.afterChange(index);
+        }
+
+        function createRichTextSelectedColorPreviewHtml(index, range, value) {
+            const data = getData();
+            const editorEl = getRichTextEditor(index);
+            const selectedValue = deps.normalizeColorValue(value);
+            if (!editorEl || !data[index] || !selectedValue || !range || range.collapsed) return "";
+            if (!isRangeInsideElement(range, editorEl)) return "";
+
+            const offsets = {
+                start: getRichTextBoundaryOffset(editorEl, range.startContainer, range.startOffset),
+                end: getRichTextBoundaryOffset(editorEl, range.endContainer, range.endOffset),
+                collapsed: false
+            };
+            const clone = editorEl.cloneNode(false);
+            clone.innerHTML = data[index].text || editorEl.innerHTML;
+
+            const start = getRichTextPositionAtOffset(clone, offsets.start);
+            const end = getRichTextPositionAtOffset(clone, offsets.end);
+            const previewRange = clone.ownerDocument.createRange();
+            previewRange.setStart(start.node, start.offset);
+            previewRange.setEnd(end.node, end.offset);
+
+            if (!wrapRichTextRangeInRoot(clone, previewRange, "color", selectedValue)) return "";
+
+            return deps.sanitizeRichText(clone.innerHTML);
         }
 
         function normalizeRichTextCommandSelection(editorEl) {
@@ -820,6 +863,7 @@
             splitRichTextRangeBoundaries,
             getRichTextRangeTextNodes,
             clearRichTextRangeColor,
+            createRichTextSelectedColorPreviewHtml,
             finishRichTextEditorChange,
             formatCardText,
             applyRichTextFont,

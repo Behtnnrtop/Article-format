@@ -328,6 +328,7 @@ const customColorPickerState = {
 };
 let activeCustomColorTarget = null;
 let richTextColorPickerContext = null;
+let richTextColorPreviewState = null;
 let changelogLoadPromise = null;
 let changelogState = {
     raw: "",
@@ -2286,6 +2287,21 @@ async function loadSystemFonts() {
    Render
 =========================== */
 
+function getPreviewCardRenderItem(item, index) {
+    if (!richTextColorPreviewState || richTextColorPreviewState.index !== index || !item || item.type !== "text") {
+        return item;
+    }
+
+    const previewItem = { ...item };
+    if (richTextColorPreviewState.text) {
+        previewItem.text = richTextColorPreviewState.text;
+    }
+    if (richTextColorPreviewState.contentColor) {
+        previewItem.contentColor = richTextColorPreviewState.contentColor;
+    }
+    return previewItem;
+}
+
 function renderPosterCards(poster, previewFontScale = getPreviewFontScale()) {
     const cards = getPosterPart(poster, "cards");
     if (!cards) return;
@@ -2297,7 +2313,7 @@ function renderPosterCards(poster, previewFontScale = getPreviewFontScale()) {
             const divider = showParagraphDividers && visibleIndex > 0
                 ? '<div class="paragraphDivider" aria-hidden="true"><span></span></div>'
                 : "";
-            return `${divider}${renderPreviewCard(item, index, previewFontScale)}`;
+            return `${divider}${renderPreviewCard(getPreviewCardRenderItem(item, index), index, previewFontScale)}`;
         })
         .join("");
     bindCardImageLoadHandlers(cards);
@@ -2322,21 +2338,21 @@ function bindCardImageLoadHandlers(root) {
     });
 }
 
-function renderPreviewCardByIndex(index, { deferTypesetting = false } = {}) {
+function renderPreviewCardByIndex(index, { deferTypesetting = false, shouldSave = true } = {}) {
     const item = data[index];
     const existingCard = document.querySelector(`#cards .card[data-card-index="${index}"]`);
 
     if (!item || item.hidden || !existingCard) {
-        renderPreview();
+        renderPreview({ shouldSave });
         return;
     }
 
     const template = document.createElement("template");
-    template.innerHTML = renderPreviewCard(item, index, getPreviewFontScale()).trim();
+    template.innerHTML = renderPreviewCard(getPreviewCardRenderItem(item, index), index, getPreviewFontScale()).trim();
     const nextCard = template.content.firstElementChild;
 
     if (!nextCard) {
-        renderPreview();
+        renderPreview({ shouldSave });
         return;
     }
 
@@ -2353,7 +2369,9 @@ function renderPreviewCardByIndex(index, { deferTypesetting = false } = {}) {
 
     syncCardsOffset();
     schedulePosterBackgroundSync(document.getElementById("poster"));
-    saveState();
+    if (shouldSave) {
+        saveState();
+    }
 }
 
 function flushPendingCardPreviewRenders() {
@@ -3193,6 +3211,10 @@ function clearRichTextRangeColor(range, editorEl) {
     return richTextEditor.clearRichTextRangeColor(range, editorEl);
 }
 
+function createRichTextSelectedColorPreviewHtml(index, range, value) {
+    return richTextEditor.createRichTextSelectedColorPreviewHtml(index, range, value);
+}
+
 function finishRichTextEditorChange(index) {
     if (isMobileViewport()) {
         pendingCardPreviewIndexes.add(index);
@@ -3237,12 +3259,47 @@ function updateRichTextColorButton(button, color) {
     button.style.setProperty("--rich-text-color", selectedColor);
 }
 
+function refreshRichTextColorPreview(index) {
+    if (isMobileViewport()) {
+        markMobileTypesettingDirty();
+        renderPreview({ shouldSave: false, deferTypesetting: true });
+        return;
+    }
+
+    renderPreviewCardByIndex(index, { shouldSave: false });
+}
+
+function clearRichTextColorPreviewState(options = {}) {
+    const previousIndex = richTextColorPreviewState ? richTextColorPreviewState.index : -1;
+    richTextColorPreviewState = null;
+
+    if (options.render !== false && previousIndex >= 0) {
+        refreshRichTextColorPreview(previousIndex);
+    }
+}
+
 function previewRichTextColorPicker(value) {
     const selectedColor = normalizeColorValue(value);
     if (!selectedColor || !richTextColorPickerContext) return;
 
     richTextColorPickerContext.pendingColor = selectedColor;
     updateRichTextColorButton(richTextColorPickerContext.button, selectedColor);
+
+    const context = richTextColorPickerContext;
+    const nextPreviewState = {
+        index: context.index
+    };
+
+    if (context.hasSelectedText && context.range) {
+        const previewHtml = createRichTextSelectedColorPreviewHtml(context.index, context.range, selectedColor);
+        if (!previewHtml) return;
+        nextPreviewState.text = previewHtml;
+    } else {
+        nextPreviewState.contentColor = selectedColor;
+    }
+
+    richTextColorPreviewState = nextPreviewState;
+    refreshRichTextColorPreview(context.index);
 }
 
 function cancelRichTextColorPicker() {
@@ -3253,6 +3310,7 @@ function cancelRichTextColorPicker() {
         richTextColorPickerContext.originalButtonColor || getRichTextColorPickerValue()
     );
     richTextColorPickerContext = null;
+    clearRichTextColorPreviewState();
 }
 
 function confirmRichTextColorPicker() {
@@ -3261,6 +3319,7 @@ function confirmRichTextColorPicker() {
     const context = richTextColorPickerContext;
     const selectedColor = normalizeColorValue(context.pendingColor);
     richTextColorPickerContext = null;
+    clearRichTextColorPreviewState({ render: false });
 
     if (!selectedColor || !data[context.index]) return;
 
@@ -3277,6 +3336,7 @@ function resetRichTextColorFromPicker() {
 
     const context = richTextColorPickerContext;
     richTextColorPickerContext = null;
+    clearRichTextColorPreviewState({ render: false });
     closeCustomColorPanels();
 
     resetRichTextColorWithContext(context);
@@ -3323,6 +3383,8 @@ function scheduleRichTextColorPanelPosition(panel, button) {
 function openRichTextColorPicker(index, button = null) {
     const editorEl = getRichTextEditor(index);
     if (!editorEl || !data[index]) return;
+
+    clearRichTextColorPreviewState();
 
     const savedRange = getSavedRichTextRange(index);
     const selectedColor = normalizeColorValue(data[index].contentColor) || textColor;
