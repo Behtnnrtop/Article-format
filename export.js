@@ -1245,7 +1245,13 @@ async function drawFullSliceBackground(ctx, width, height, fallbackBackground = 
     try {
         const image = await loadBackgroundImageForCanvas();
         if (image) {
-            drawMirroredRepeatedImageAtNaturalSize(ctx, image, width, height);
+            const previousAlpha = ctx.globalAlpha;
+            try {
+                ctx.globalAlpha = previousAlpha * normalizeBackgroundImageOpacity(backgroundImageOpacity);
+                drawMirroredRepeatedImageAtNaturalSize(ctx, image, width, height);
+            } finally {
+                ctx.globalAlpha = previousAlpha;
+            }
         }
     } catch (error) {
         console.warn(error);

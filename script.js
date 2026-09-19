@@ -9,7 +9,7 @@ const ARTICLE_STATE_KEY_PREFIX = "article-summary-article:";
 const CHANGELOG_SEEN_DATE_STORAGE_KEY = "article-summary-changelog-seen-date";
 const CHANGELOG_URL = "CHANGELOG.md";
 const ARTICLE_INDEX_SCHEMA_VERSION = 1;
-const STATE_SCHEMA_VERSION = 20;
+const STATE_SCHEMA_VERSION = 21;
 const CONTENT_EDITOR_PLACEHOLDER = "输入段落内容...";
 const CARD_TITLE_PLACEHOLDER = "输入段落标题...";
 
@@ -22,6 +22,7 @@ let globalFont = {
 let backgroundColor = "#efefef";
 let backgroundImageDataUrl = "";
 let backgroundImageName = "";
+let backgroundImageOpacity = 1;
 let backgroundImageBlendEdge = 0;
 let textColor = "#111111";
 let recentBackgroundColors = [];
@@ -60,6 +61,8 @@ const MIN_PREVIEW_FONT_SCALE = 0.32;
 const BASE_COPYRIGHT_FONT_SIZE = 13;
 const BASE_RESOLUTION_WIDTH = 1080;
 const MAX_BACKGROUND_IMAGE_FILE_SIZE = 6 * 1024 * 1024;
+const MIN_BACKGROUND_IMAGE_OPACITY = 0;
+const MAX_BACKGROUND_IMAGE_OPACITY = 1;
 const MAX_BACKGROUND_IMAGE_BLEND_EDGE = 0;
 const SUBTITLE_SETTINGS = Object.freeze({
     fontFamily: "inherit",
@@ -254,6 +257,8 @@ const FIXED_PRESET_COLOR_COUNT = 4;
 const MAX_RECENT_COLOR_COUNT = 5;
 
 const backgroundImageInput = document.getElementById("backgroundImageInput");
+const backgroundImageOpacityRange = document.getElementById("backgroundImageOpacityRange");
+const backgroundImageOpacityValue = document.getElementById("backgroundImageOpacityValue");
 const currentWordCountElements = document.querySelectorAll("[data-current-word-count]");
 const subtitleInput = document.getElementById("subtitleInput");
 const articleSelect = document.getElementById("articleSelect");
@@ -762,7 +767,8 @@ const DEFAULT_ARTICLE_DATA = [
         textAlign: "left",
         hidden: false,
         lineSpacing: 1.8,
-        paragraphSpacing: 0
+        paragraphSpacing: 0,
+        sideSpacing: 0
     },
     {
         type: "text",
@@ -779,7 +785,8 @@ const DEFAULT_ARTICLE_DATA = [
         textAlign: "left",
         hidden: false,
         lineSpacing: 1.8,
-        paragraphSpacing: 0
+        paragraphSpacing: 0,
+        sideSpacing: 0
     }
 ];
 
@@ -872,9 +879,20 @@ const {
     resolveCardContentFontFamily,
     getItemLineSpacing,
     getItemParagraphSpacing,
+    getItemSideSpacing,
     renderFontOptionElements,
     getTextColor: () => textColor
 });
+
+function normalizeBackgroundImageOpacity(value) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return MAX_BACKGROUND_IMAGE_OPACITY;
+    return Math.min(Math.max(numericValue, MIN_BACKGROUND_IMAGE_OPACITY), MAX_BACKGROUND_IMAGE_OPACITY);
+}
+
+function getBackgroundImageOpacityPercent() {
+    return Math.round(normalizeBackgroundImageOpacity(backgroundImageOpacity) * 100);
+}
 
 const imageStore = window.ArticleImageStore || null;
 const articleWorkspace = window.ArticleWorkspace.createArticleWorkspace({
@@ -938,6 +956,7 @@ function createBlankPersistedState() {
         backgroundColor: "#efefef",
         backgroundImageDataUrl: "",
         backgroundImageName: "",
+        backgroundImageOpacity: 1,
         backgroundImageBlendEdge: 0,
         textColor: "#111111",
         recentBackgroundColors: [],
@@ -984,6 +1003,7 @@ function resetRuntimeState() {
     backgroundColor = "#efefef";
     backgroundImageDataUrl = "";
     backgroundImageName = "";
+    backgroundImageOpacity = 1;
     backgroundImageBlendEdge = 0;
     textColor = "#111111";
     recentBackgroundColors = [];
@@ -1058,6 +1078,10 @@ function loadState() {
             backgroundImageName = state.backgroundImageName;
         }
 
+        if (typeof state.backgroundImageOpacity === "number") {
+            backgroundImageOpacity = normalizeBackgroundImageOpacity(state.backgroundImageOpacity);
+        }
+
         if (typeof state.backgroundImageBlendEdge === "number") {
             backgroundImageBlendEdge = Math.min(Math.max(state.backgroundImageBlendEdge, 0), MAX_BACKGROUND_IMAGE_BLEND_EDGE);
         }
@@ -1119,7 +1143,8 @@ function loadState() {
         data = data.map((item) => ({
             ...item,
             lineSpacing: typeof item.lineSpacing === "number" ? item.lineSpacing : lineSpacing,
-            paragraphSpacing: typeof item.paragraphSpacing === "number" ? item.paragraphSpacing : paragraphSpacing
+            paragraphSpacing: typeof item.paragraphSpacing === "number" ? item.paragraphSpacing : paragraphSpacing,
+            sideSpacing: typeof item.sideSpacing === "number" ? item.sideSpacing : 0
         }));
 
         collapsedCardEditorIndexes.clear();
@@ -1534,6 +1559,10 @@ function getItemParagraphSpacing(item) {
     return typeof item.paragraphSpacing === "number" ? item.paragraphSpacing : paragraphSpacing;
 }
 
+function getItemSideSpacing(item) {
+    return typeof item.sideSpacing === "number" ? item.sideSpacing : 0;
+}
+
 function autoResizeTextarea(element) {
     if (!element) return;
 
@@ -1590,6 +1619,7 @@ function buildPersistedState() {
         backgroundColor,
         backgroundImageDataUrl,
         backgroundImageName,
+        backgroundImageOpacity,
         backgroundImageBlendEdge,
         textColor,
         recentBackgroundColors,
@@ -2831,6 +2861,7 @@ function renderBackgroundImageControls() {
     const status = document.getElementById("backgroundImageStatus");
     const preview = document.getElementById("backgroundImagePreview");
     const removeButton = document.getElementById("removeBackgroundImageBtn");
+    const opacityPercent = getBackgroundImageOpacityPercent();
 
     if (status) {
         status.innerText = backgroundImageDataUrl
@@ -2840,11 +2871,22 @@ function renderBackgroundImageControls() {
 
     if (preview) {
         preview.hidden = !backgroundImageDataUrl;
-        preview.style.backgroundImage = backgroundImageDataUrl ? `url("${backgroundImageDataUrl}")` : "";
+        preview.style.backgroundColor = backgroundColor;
+        preview.style.setProperty("--background-image-preview-url", backgroundImageDataUrl ? `url("${backgroundImageDataUrl}")` : "none");
+        preview.style.setProperty("--background-image-preview-opacity", String(normalizeBackgroundImageOpacity(backgroundImageOpacity)));
     }
 
     if (removeButton) {
         removeButton.disabled = !backgroundImageDataUrl;
+    }
+
+    if (backgroundImageOpacityRange) {
+        backgroundImageOpacityRange.value = String(opacityPercent);
+        backgroundImageOpacityRange.disabled = !backgroundImageDataUrl;
+    }
+
+    if (backgroundImageOpacityValue) {
+        backgroundImageOpacityValue.innerText = `${opacityPercent}%`;
     }
 }
 
@@ -3478,6 +3520,8 @@ function applyBackgroundColorPreview(value) {
     if (poster) {
         poster.style.backgroundColor = backgroundColor;
     }
+
+    renderBackgroundImageControls();
 }
 
 function commitBackgroundColorPreview() {
@@ -3708,12 +3752,21 @@ function changeBackgroundImage(file) {
     reader.readAsDataURL(file);
 }
 
+function changeBackgroundImageOpacity(value) {
+    backgroundImageOpacity = normalizeBackgroundImageOpacity(Number(value) / 100);
+    renderBackgroundImageControls();
+    schedulePosterBackgroundSync(document.getElementById("poster"));
+    schedulePhonePreviewSync();
+    saveState();
+}
+
 function removeBackgroundImage() {
     const ok = window.confirm("确定要移除背景图片吗？");
     if (!ok) return;
 
     backgroundImageDataUrl = "";
     backgroundImageName = "";
+    backgroundImageOpacity = 1;
     if (backgroundImageInput) {
         backgroundImageInput.value = "";
     }
@@ -3861,6 +3914,14 @@ function changeParagraphSpacing(index, value) {
     if (!data[index] || Number.isNaN(nextValue)) return;
 
     data[index].paragraphSpacing = Math.min(Math.max(nextValue, 0), 80);
+    scheduleCardPreviewRender(index);
+}
+
+function changeParagraphSideSpacing(index, value) {
+    const nextValue = Number(value);
+    if (!data[index] || Number.isNaN(nextValue)) return;
+
+    data[index].sideSpacing = Math.min(Math.max(nextValue, -120), 240);
     scheduleCardPreviewRender(index);
 }
 
@@ -5741,6 +5802,12 @@ document.addEventListener("keydown", (event) => {
 if (backgroundImageInput) {
     backgroundImageInput.onchange = function () {
         changeBackgroundImage((this.files && this.files[0]) || null);
+    };
+}
+
+if (backgroundImageOpacityRange) {
+    backgroundImageOpacityRange.oninput = function () {
+        changeBackgroundImageOpacity(this.value);
     };
 }
 

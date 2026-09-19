@@ -27,6 +27,7 @@
             resolveCardContentFontFamily,
             getItemLineSpacing,
             getItemParagraphSpacing,
+            getItemSideSpacing,
             renderFontOptionElements,
             getTextColor
         } = deps;
@@ -48,6 +49,7 @@
                 hidden: false,
                 lineSpacing: 1.8,
                 paragraphSpacing: 0,
+                sideSpacing: 0,
                 ...overrides
             };
         }
@@ -73,6 +75,7 @@
                 titleAlign: "left",
                 hidden: false,
                 paragraphSpacing: 0,
+                sideSpacing: 0,
                 ...overrides
             };
         }
@@ -99,6 +102,7 @@
                     titleSize: shouldNormalizeFontSizes ? Math.max(titleSize, 48) : titleSize,
                     titleFontFamily: typeof item.titleFontFamily === "string" ? item.titleFontFamily : CARD_TITLE_DEFAULT_FONT_FAMILY,
                     titleAlign: normalizeTextAlign(item.titleAlign),
+                    sideSpacing: typeof item.sideSpacing === "number" ? item.sideSpacing : 0,
                     hidden: item.hidden === true
                 };
 
@@ -311,8 +315,9 @@
         function renderPreviewCard(item, index, previewFontScale) {
             const titleText = escapeHtml(item.title);
             const itemParagraphSpacing = getItemParagraphSpacing(item);
+            const itemSideSpacing = getItemSideSpacing(item);
             const titleAlign = normalizeTextAlign(item.titleAlign);
-            const cardStyle = `--card-paragraph-spacing:${itemParagraphSpacing}px`;
+            const cardStyle = `--card-paragraph-spacing:${itemParagraphSpacing}px;--card-side-spacing:${itemSideSpacing}px`;
             const titleHtml = `<div class="cardTitle" data-text-align="${titleAlign}" style="font-size:${item.titleSize * previewFontScale}px;font-family:${escapeHtml(resolveCardTitleFontFamily(item))};text-align:${titleAlign};">${titleText}</div>`;
 
             if (isImageCard(item)) {
@@ -350,6 +355,7 @@
         function renderTextCardEditorBody(item, index, textHtml, contentFontOptions, contentFontToolbarValue) {
             const itemLineSpacing = getItemLineSpacing(item);
             const itemParagraphSpacing = getItemParagraphSpacing(item);
+            const itemSideSpacing = getItemSideSpacing(item);
             return `
             <div class="blockSizeControlRow">
                 <label class="inlineLabel">内容 <span class="sizeValue" data-card-index="${index}" data-size-type="text">${item.textSize}px</span></label>
@@ -376,6 +382,14 @@
                         <button class="mobileStepperButton" type="button" aria-label="减小段间距" onclick="adjustMobileNumberInput('paragraphSpacingInput-${index}',-1)">-</button>
                         <input class="mobileStepperInput" type="number" id="paragraphSpacingInput-${index}" min="0" max="80" step="2" data-mobile-step="1" value="${itemParagraphSpacing}" oninput="changeParagraphSpacing(${index},this.value)">
                         <button class="mobileStepperButton" type="button" aria-label="增大段间距" onclick="adjustMobileNumberInput('paragraphSpacingInput-${index}',1)">+</button>
+                    </span>
+                </label>
+                <label class="mobileStepperField" for="paragraphSideSpacingInput-${index}">
+                    <span>段落两侧边距</span>
+                    <span class="mobileStepper">
+                        <button class="mobileStepperButton" type="button" aria-label="减小段落两侧边距" onclick="adjustMobileNumberInput('paragraphSideSpacingInput-${index}',-1)">-</button>
+                        <input class="mobileStepperInput" type="number" id="paragraphSideSpacingInput-${index}" min="-120" max="240" step="2" data-mobile-step="1" value="${itemSideSpacing}" oninput="changeParagraphSideSpacing(${index},this.value)">
+                        <button class="mobileStepperButton" type="button" aria-label="增大段落两侧边距" onclick="adjustMobileNumberInput('paragraphSideSpacingInput-${index}',1)">+</button>
                     </span>
                 </label>
             </div>
@@ -450,6 +464,7 @@
 
         function renderImageCardEditorBody(item, index) {
             const itemParagraphSpacing = getItemParagraphSpacing(item);
+            const itemSideSpacing = getItemSideSpacing(item);
             const images = Array.isArray(item.images) ? item.images : (item.imageDataUrl ? [item] : []);
             const totalBytes = images.reduce((sum, image) => sum + (Number(image.imageBytes) || 0), 0);
             const imageStatus = images.length
@@ -494,6 +509,14 @@
                         <button class="mobileStepperButton" type="button" aria-label="减小段间距" onclick="adjustMobileNumberInput('paragraphSpacingInput-${index}',-1)">-</button>
                         <input class="mobileStepperInput" type="number" id="paragraphSpacingInput-${index}" min="0" max="80" step="2" data-mobile-step="1" value="${itemParagraphSpacing}" oninput="changeParagraphSpacing(${index},this.value)">
                         <button class="mobileStepperButton" type="button" aria-label="增大段间距" onclick="adjustMobileNumberInput('paragraphSpacingInput-${index}',1)">+</button>
+                    </span>
+                </label>
+                <label class="mobileStepperField" for="paragraphSideSpacingInput-${index}">
+                    <span>段落两侧边距</span>
+                    <span class="mobileStepper">
+                        <button class="mobileStepperButton" type="button" aria-label="减小段落两侧边距" onclick="adjustMobileNumberInput('paragraphSideSpacingInput-${index}',-1)">-</button>
+                        <input class="mobileStepperInput" type="number" id="paragraphSideSpacingInput-${index}" min="-120" max="240" step="2" data-mobile-step="1" value="${itemSideSpacing}" oninput="changeParagraphSideSpacing(${index},this.value)">
+                        <button class="mobileStepperButton" type="button" aria-label="增大段落两侧边距" onclick="adjustMobileNumberInput('paragraphSideSpacingInput-${index}',1)">+</button>
                     </span>
                 </label>
                 <div class="cardImageEditorActions cardImageSpacingActions">
