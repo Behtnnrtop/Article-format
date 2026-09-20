@@ -2883,6 +2883,7 @@ function renderBackgroundImageControls() {
     if (backgroundImageOpacityRange) {
         backgroundImageOpacityRange.value = String(opacityPercent);
         backgroundImageOpacityRange.disabled = !backgroundImageDataUrl;
+        backgroundImageOpacityRange.style.setProperty("--background-image-opacity-progress", `${opacityPercent}%`);
     }
 
     if (backgroundImageOpacityValue) {

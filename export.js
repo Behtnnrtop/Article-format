@@ -52,9 +52,21 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
         }
 
         exportState.poster.dataset.captureTarget = "poster";
+        const captureWidth = Math.max(
+            1,
+            Math.ceil(exportState.poster.scrollWidth || exportState.poster.offsetWidth || exportState.poster.getBoundingClientRect().width || 0)
+        );
+        const fullCaptureHeight = Math.max(
+            1,
+            Math.ceil(exportState.poster.scrollHeight || exportState.poster.offsetHeight || exportState.poster.getBoundingClientRect().height || 0)
+        );
         const captureOptions = {
             backgroundColor: transparentPosterBackground ? null : backgroundColor,
             scale,
+            width: captureWidth,
+            height: fullCaptureHeight,
+            windowWidth: Math.max(captureWidth, window.innerWidth || 0),
+            windowHeight: Math.max(fullCaptureHeight, window.innerHeight || 0),
             useCORS: true,
             onclone: (clonedDoc) => {
                 const clonedPoster = clonedDoc.querySelector('[data-capture-target="poster"]');
@@ -112,6 +124,7 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
         }
         if (Number.isFinite(captureHeight)) {
             captureOptions.height = Math.max(1, captureHeight);
+            captureOptions.windowHeight = Math.max(captureOptions.height, window.innerHeight || 0);
         }
 
         const canvas = await html2canvas(exportState.poster, captureOptions);
@@ -664,13 +677,29 @@ function getProtectedTextRanges(sourceCanvas, poster = document.getElementById("
 }
 
 function getGeneratedLineContentRanges(sourceCanvas, poster = document.getElementById("poster"), padding = 0) {
-    const lineRanges = getElementCanvasRanges(
-        Array.from((poster && poster.querySelectorAll(".typesetLineInner, .verticalTextLine")) || [])
-            .filter((element) => element.textContent.trim()),
-        sourceCanvas,
-        padding,
-        poster
-    );
+    const lineElements = Array.from((poster && poster.querySelectorAll(".typesetLineInner, .verticalTextLine")) || [])
+        .filter((element) => element.textContent.trim());
+    const lineGroupIds = new Map();
+    const lineGroupIndexes = new Map();
+    const lineRanges = lineElements.flatMap((element) => {
+        const range = getElementCanvasRanges([element], sourceCanvas, padding, poster)[0];
+        if (!range) return [];
+
+        const lineGroup = element.closest(".typesetText") || element.parentElement;
+        if (!lineGroupIds.has(lineGroup)) {
+            lineGroupIds.set(lineGroup, lineGroupIds.size + 1);
+            lineGroupIndexes.set(lineGroup, 0);
+        }
+        const lineIndex = lineGroupIndexes.get(lineGroup) || 0;
+        lineGroupIndexes.set(lineGroup, lineIndex + 1);
+
+        return [{
+            ...range,
+            generatedLineGroup: lineGroupIds.get(lineGroup),
+            generatedLineIndex: lineIndex,
+            isHorizontalGeneratedLine: element.classList.contains("typesetLineInner")
+        }];
+    });
 
     if (lineRanges.length) return lineRanges;
 
@@ -991,11 +1020,75 @@ function findNearestCanvasCleanCutY(idealCutY, minCutY, hasInkAtRow, clearance, 
     return null;
 }
 
-function enforceCanvasCleanCutHeight(candidateHeight, sourceY, maxContentHeight, hasInkAtRow, scale) {
+function findLatestLineBoundaryCutY(idealCutY, minCutY, protectedRanges, clearance) {
+    if (!Array.isArray(protectedRanges) || !protectedRanges.length) return null;
+
+    const cutCeiling = Math.floor(idealCutY);
+    const ranges = protectedRanges
+        .filter((range) => range.bottom > range.top)
+        .sort((a, b) => a.top - b.top);
+
+    const candidates = [];
+
+    for (let index = ranges.length - 1; index >= 0; index -= 1) {
+        const range = ranges[index];
+        const candidate = Math.floor(range.bottom) + Math.max(1, clearance);
+
+        if (candidate > cutCeiling || candidate <= minCutY) continue;
+
+        const nextRange = ranges[index + 1];
+        if (nextRange && candidate + clearance >= nextRange.top) continue;
+        if (isProtectedCutBand(candidate, ranges, clearance)) continue;
+
+        candidates.push(candidate);
+    }
+
+    const horizontalLineGroups = new Map();
+    ranges
+        .filter((range) => range.isHorizontalGeneratedLine && Number.isFinite(range.generatedLineGroup))
+        .forEach((range) => {
+            if (!horizontalLineGroups.has(range.generatedLineGroup)) {
+                horizontalLineGroups.set(range.generatedLineGroup, []);
+            }
+            horizontalLineGroups.get(range.generatedLineGroup).push(range);
+        });
+
+    horizontalLineGroups.forEach((groupRanges) => {
+        groupRanges
+            .sort((a, b) => a.generatedLineIndex - b.generatedLineIndex)
+            .forEach((range, index) => {
+                const nextRange = groupRanges[index + 1];
+                if (!nextRange) return;
+
+                const currentCenter = (range.top + range.bottom) / 2;
+                const nextCenter = (nextRange.top + nextRange.bottom) / 2;
+                if (nextCenter <= currentCenter) return;
+
+                const candidate = Math.floor((currentCenter + nextCenter) / 2);
+                if (candidate > cutCeiling || candidate <= minCutY) return;
+
+                const crossesOtherProtectedContent = ranges.some((otherRange) => {
+                    const isAdjacentLine = otherRange === range || otherRange === nextRange;
+                    return !isAdjacentLine
+                        && candidate >= otherRange.top
+                        && candidate <= otherRange.bottom;
+                });
+                if (!crossesOtherProtectedContent) {
+                    candidates.push(candidate);
+                }
+            });
+    });
+
+    return candidates.length ? Math.max(...candidates) : null;
+}
+
+function enforceCanvasCleanCutHeight(candidateHeight, sourceY, maxContentHeight, hasInkAtRow, scale, options = {}) {
     if (!hasInkAtRow) return candidateHeight;
 
     const cutY = sourceY + candidateHeight;
-    const clearance = Math.max(8, Math.round(14 * scale));
+    const clearance = Number.isFinite(options.clearance)
+        ? Math.max(0, Math.round(options.clearance))
+        : Math.max(8, Math.round(14 * scale));
     if (!isCanvasInkCutBand(cutY, hasInkAtRow, clearance)) {
         return candidateHeight;
     }
@@ -1010,6 +1103,41 @@ function enforceCanvasCleanCutHeight(candidateHeight, sourceY, maxContentHeight,
     );
 
     return cleanCutY === null ? candidateHeight : Math.max(1, cleanCutY - sourceY);
+}
+
+function getBestSafeCutCandidate(candidates, sourceY, maxContentHeight, hasInkAtRow, scale) {
+    let bestCandidate = null;
+
+    candidates
+        .filter((candidate) => candidate && Number.isFinite(candidate.cutY))
+        .forEach((candidate) => {
+            const requestedHeight = Math.max(1, candidate.cutY - sourceY);
+            const enforcedHeight = candidate.skipCanvasEnforcement
+                ? requestedHeight
+                : enforceCanvasCleanCutHeight(
+                    requestedHeight,
+                    sourceY,
+                    maxContentHeight,
+                    hasInkAtRow,
+                    scale,
+                    { clearance: candidate.canvasClearance }
+                );
+
+            if (enforcedHeight <= 0 || enforcedHeight > maxContentHeight) return;
+
+            const enforcedCutY = sourceY + enforcedHeight;
+            const normalizedCandidate = {
+                ...candidate,
+                cutY: enforcedCutY,
+                height: enforcedHeight
+            };
+
+            if (!bestCandidate || normalizedCandidate.cutY > bestCandidate.cutY) {
+                bestCandidate = normalizedCandidate;
+            }
+        });
+
+    return bestCandidate;
 }
 
 function getLineBoundaryFallbackCutY(idealCutY, minCutY, protectedRanges, clearance, maxBacktrack) {
@@ -1114,17 +1242,14 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
             maxBacktrack
         )
         : null;
-
-    if (tightTextSafeCutY !== null && (safeCutY === null || tightTextSafeCutY > safeCutY)) {
-        return enforceCanvasCleanCutHeight(
-            Math.max(1, tightTextSafeCutY - sourceY),
-            sourceY,
-            maxContentHeight,
-            hasInkAtRow,
-            scale
-        );
-    }
-
+    const tightLineBoundaryCutY = tightFallbackCutRanges
+        ? findLatestLineBoundaryCutY(
+            idealCutY,
+            minCutY,
+            tightFallbackCutRanges,
+            0
+        )
+        : null;
     const textSafeCutY = findNearestSafeCutY(
         idealCutY,
         minCutY,
@@ -1134,18 +1259,47 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
         maxBacktrack
     );
 
-    if (safeCutY !== null) {
-        return Math.max(1, safeCutY - sourceY);
-    }
+    const bestCutCandidate = getBestSafeCutCandidate(
+        [
+            safeCutY === null ? null : {
+                reason: "conservative-safe-band",
+                cutY: safeCutY,
+                skipCanvasEnforcement: true
+            },
+            tightTextSafeCutY === null ? null : {
+                reason: "tight-generated-line-band",
+                cutY: tightTextSafeCutY
+            },
+            tightLineBoundaryCutY === null ? null : {
+                reason: "latest-generated-line-boundary",
+                cutY: tightLineBoundaryCutY,
+                canvasClearance: Math.max(1, Math.round(scale))
+            },
+            textSafeCutY === null ? null : {
+                reason: "zero-padding-generated-line-band",
+                cutY: textSafeCutY
+            }
+        ],
+        sourceY,
+        maxContentHeight,
+        hasInkAtRow,
+        scale
+    );
 
-    if (textSafeCutY !== null) {
-        return enforceCanvasCleanCutHeight(
-            Math.max(1, textSafeCutY - sourceY),
+    if (bestCutCandidate) {
+        console.info("Sliced export cut decision", {
+            reason: bestCutCandidate.reason,
             sourceY,
-            maxContentHeight,
-            hasInkAtRow,
-            scale
-        );
+            idealCutY,
+            selectedCutY: bestCutCandidate.cutY,
+            selectedHeight: bestCutCandidate.height,
+            safeCutY,
+            tightTextSafeCutY,
+            tightLineBoundaryCutY,
+            textSafeCutY,
+            maxContentHeight
+        });
+        return bestCutCandidate.height;
     }
 
     const fallbackCutY = getLineBoundaryFallbackCutY(idealCutY, minCutY, protectedRanges, clearance, maxBacktrack);
