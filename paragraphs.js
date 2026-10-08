@@ -28,6 +28,7 @@
             getItemLineSpacing,
             getItemParagraphSpacing,
             getItemSideSpacing,
+            getItemFirstLineIndent,
             renderFontOptionElements,
             getTextColor
         } = deps;
@@ -50,6 +51,7 @@
                 lineSpacing: 1.8,
                 paragraphSpacing: 0,
                 sideSpacing: 0,
+                firstLineIndent: false,
                 ...overrides
             };
         }
@@ -159,7 +161,8 @@
                         ? item.contentFontToolbarValue
                         : (typeof item.contentFontFamily === "string" ? item.contentFontFamily : INHERIT_FONT_VALUE),
                     contentColor: normalizeColorValue(item.contentColor),
-                    textAlign: normalizeTextAlign(item.textAlign)
+                    textAlign: normalizeTextAlign(item.textAlign),
+                    firstLineIndent: item.firstLineIndent === true
                 });
             });
         }
@@ -340,13 +343,14 @@
 
             const textHtml = renderRichTextPreview(item.text, { sanitize: false });
             const itemLineSpacing = getItemLineSpacing(item);
+            const itemFirstLineIndent = getItemFirstLineIndent(item);
             const textAlign = normalizeTextAlign(item.textAlign);
 
             return `
         <div class="card" data-card-index="${index}" data-card-type="text" style="${cardStyle}">
             ${titleHtml}
             <div class="cardContent">
-                <div class="info" data-text-align="${textAlign}" style="font-size:${item.textSize * previewFontScale}px;font-family:${escapeHtml(resolveCardContentFontFamily(item))};${item.contentColor ? `color:${escapeHtml(item.contentColor)};` : ""}--content-line-height:${itemLineSpacing};--content-paragraph-spacing:${itemParagraphSpacing}px;text-align:${textAlign};">${textHtml}</div>
+                <div class="info" data-text-align="${textAlign}" data-first-line-indent="${itemFirstLineIndent ? "true" : "false"}" style="font-size:${item.textSize * previewFontScale}px;font-family:${escapeHtml(resolveCardContentFontFamily(item))};${item.contentColor ? `color:${escapeHtml(item.contentColor)};` : ""}--content-line-height:${itemLineSpacing};--content-paragraph-spacing:${itemParagraphSpacing}px;--content-first-line-indent:${itemFirstLineIndent ? "2em" : "0em"};text-align:${textAlign};">${textHtml}</div>
             </div>
         </div>
         `;
@@ -356,6 +360,7 @@
             const itemLineSpacing = getItemLineSpacing(item);
             const itemParagraphSpacing = getItemParagraphSpacing(item);
             const itemSideSpacing = getItemSideSpacing(item);
+            const itemFirstLineIndent = getItemFirstLineIndent(item);
             return `
             <div class="blockSizeControlRow">
                 <label class="inlineLabel">内容 <span class="sizeValue" data-card-index="${index}" data-size-type="text">${item.textSize}px</span></label>

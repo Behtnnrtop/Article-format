@@ -928,6 +928,19 @@ function getCssPixelValue(value) {
     return Number.isFinite(number) ? number : null;
 }
 
+function getCssLengthPixelValue(value, element) {
+    const text = String(value || "").trim();
+    const number = parseFloat(text);
+    if (!Number.isFinite(number)) return 0;
+
+    if (/em$/i.test(text)) {
+        const fontSize = parseFloat(window.getComputedStyle(element).fontSize || "0");
+        return Number.isFinite(fontSize) ? number * fontSize : 0;
+    }
+
+    return number;
+}
+
 function getPosterYearAvailableWidth(element, padding) {
     const poster = element.closest(".posterRoot");
     const header = element.parentElement;
@@ -954,6 +967,20 @@ function getTypesetAvailableWidth(element) {
     }
 
     return Math.max(1, Math.min(ownWidth || parentWidth, parentWidth || ownWidth));
+}
+
+function getTypesetFirstLineIndent(element) {
+    if (!element || !element.matches(".info div, .info p") || element.classList.contains("contentHeading")) {
+        return 0;
+    }
+
+    const info = element.closest(".info");
+    if (!info || info.dataset.firstLineIndent !== "true") return 0;
+
+    return Math.max(0, getCssLengthPixelValue(
+        window.getComputedStyle(info).getPropertyValue("--content-first-line-indent") || "2em",
+        element
+    ));
 }
 
 function getPosterPart(poster, part) {
@@ -1050,13 +1077,14 @@ function getSingleLineAdjustment(tokens, width, maxWidth, { minSpacing = TYPESET
 }
 
 function getJustifyTypesetLineAdjustment(line, maxWidth) {
-    if (!line || line.adjustment || line.forcedBreakAfter || line.width <= 0 || line.width >= maxWidth) return null;
-    if (line.width / maxWidth < TYPESET_MIN_JUSTIFY_FILL_RATIO) return null;
+    const lineMaxWidth = (line && line.maxWidth) || maxWidth;
+    if (!line || line.adjustment || line.forcedBreakAfter || line.width <= 0 || line.width >= lineMaxWidth) return null;
+    if (line.width / lineMaxWidth < TYPESET_MIN_JUSTIFY_FILL_RATIO) return null;
 
     const adjustableCount = getTypesetSpacingTargetCount(line.tokens);
     if (adjustableCount <= 0) return null;
 
-    const spacing = (maxWidth - line.width) / adjustableCount;
+    const spacing = (lineMaxWidth - line.width) / adjustableCount;
     if (spacing <= 0 || spacing > TYPESET_MAX_JUSTIFY_SPACING) return null;
 
     return { type: "spacing", spacing };
@@ -1112,18 +1140,21 @@ function getTypesetSegmentFitEnd(tokens, start, end, maxWidth, measureRange) {
     return fitEnd;
 }
 
-function buildTypesetLines(tokens, root, maxWidth, { strategy = TYPESET_ADJUST_STRATEGY, justify = false, forceDomMeasure = false } = {}) {
+function buildTypesetLines(tokens, root, maxWidth, { strategy = TYPESET_ADJUST_STRATEGY, justify = false, forceDomMeasure = false, firstLineIndent = 0 } = {}) {
     const lines = [];
     let segmentStart = null;
     const measureRange = createTypesetRangeMeasurer(tokens, root, { forceDomMeasure });
 
-    function pushLine(start, end, { forcedBreakAfter = false } = {}) {
+    function pushLine(start, end, { forcedBreakAfter = false, indent = 0 } = {}) {
         const lineTokens = tokens.slice(start, end);
         const width = measureRange(start, end);
+        const lineMaxWidth = Math.max(1, maxWidth - indent);
         lines.push({
             tokens: lineTokens,
             width,
-            adjustment: adjustTypesetLine(lineTokens, width, maxWidth, strategy),
+            maxWidth: lineMaxWidth,
+            indent,
+            adjustment: adjustTypesetLine(lineTokens, width, lineMaxWidth, strategy),
             forcedBreakAfter
         });
     }
@@ -1144,9 +1175,12 @@ function buildTypesetLines(tokens, root, maxWidth, { strategy = TYPESET_ADJUST_S
         }
 
         let lineStart = start;
+        let isFirstSegmentLine = true;
 
         while (lineStart < end) {
-            let lineEnd = getTypesetSegmentFitEnd(tokens, lineStart, end, maxWidth, measureRange);
+            const indent = isFirstSegmentLine ? firstLineIndent : 0;
+            const lineMaxWidth = Math.max(1, maxWidth - indent);
+            let lineEnd = getTypesetSegmentFitEnd(tokens, lineStart, end, lineMaxWidth, measureRange);
 
             if (lineEnd < end && lineEnd > lineStart) {
                 const overflowingToken = tokens[lineEnd];
@@ -1165,8 +1199,12 @@ function buildTypesetLines(tokens, root, maxWidth, { strategy = TYPESET_ADJUST_S
                 lineEnd = lineStart + 1;
             }
 
-            pushLine(lineStart, lineEnd, { forcedBreakAfter: forcedBreakAfter && lineEnd >= end });
+            pushLine(lineStart, lineEnd, {
+                forcedBreakAfter: forcedBreakAfter && lineEnd >= end,
+                indent
+            });
             lineStart = lineEnd;
+            isFirstSegmentLine = false;
         }
     }
 
@@ -1196,6 +1234,10 @@ function renderTypesetLines(element, lines) {
 
     lines.forEach((line) => {
         const lineElement = createTypesetLineElement(line.tokens, line.adjustment, { includeShadow, align });
+        if (line.indent) {
+            lineElement.classList.add("typesetFirstLineIndent");
+            lineElement.style.paddingLeft = `${line.indent}px`;
+        }
         if (line.forcedBreakAfter) {
             lineElement.dataset.typesetForcedBreakAfter = "true";
         }
@@ -1243,6 +1285,16 @@ function applyRenderedJustifySpacing(element) {
 
         containTrailingPunctuationOverflow(line, lastToken);
     });
+}
+
+function getRenderedLineContentWidth(line) {
+    if (!line) return 0;
+
+    const style = window.getComputedStyle(line);
+    const paddingLeft = parseFloat(style.paddingLeft || "0");
+    const paddingRight = parseFloat(style.paddingRight || "0");
+    const width = line.getBoundingClientRect().width - paddingLeft - paddingRight;
+    return Number.isFinite(width) ? Math.max(1, width) : 0;
 }
 
 function clearRenderedLineAdjustment(tokens, spacingTargets) {
@@ -1392,7 +1444,7 @@ function getRenderedJustifySpacingNeed(element) {
         }).length;
         if (!spacingTargetCount) return;
 
-        const lineWidth = line.getBoundingClientRect().width;
+        const lineWidth = getRenderedLineContentWidth(line);
         const innerWidth = inner.getBoundingClientRect().width;
         const gap = lineWidth - innerWidth;
         if (!Number.isFinite(gap) || gap <= 1) return;
@@ -1424,9 +1476,10 @@ function getRenderedTypesetFillRatio(element, maxWidth) {
         if (!inner) return null;
 
         const width = inner.getBoundingClientRect().width;
-        if (!Number.isFinite(width) || width <= 0 || width > maxWidth) return null;
+        const lineWidth = getRenderedLineContentWidth(line) || maxWidth;
+        if (!Number.isFinite(width) || width <= 0 || width > lineWidth) return null;
 
-        return width / maxWidth;
+        return width / lineWidth;
     }).filter((ratio) => ratio !== null);
 
     if (ratios.length < 3) return null;
@@ -1438,22 +1491,26 @@ function getRenderedTypesetFillRatio(element, maxWidth) {
 function hasOverflowingTypesetLine(element, maxWidth) {
     const tolerance = 1;
 
-    return Array.from((element && element.querySelectorAll(".typesetLineInner")) || [])
-        .some((line) => line.getBoundingClientRect().width > maxWidth + tolerance);
+    return Array.from((element && element.querySelectorAll(".typesetLine")) || [])
+        .some((line) => {
+            const inner = line.querySelector(".typesetLineInner");
+            const lineWidth = getRenderedLineContentWidth(line) || maxWidth;
+            return inner && inner.getBoundingClientRect().width > lineWidth + tolerance;
+        });
 }
 
-function typesetTextElement(element, { strategy = TYPESET_ADJUST_STRATEGY, justify = false } = {}) {
+function typesetTextElement(element, { strategy = TYPESET_ADJUST_STRATEGY, justify = false, useRenderedJustify = false, forceDomMeasure = false } = {}) {
     if (!element || !element.textContent.trim()) return;
 
     const tokens = collectTypesetTokens(element);
     const maxWidth = getTypesetAvailableWidth(element);
-    const options = { strategy, justify };
-    const shouldUseMobileRenderedJustify = justify
-        && typeof isMobileViewport === "function"
-        && isMobileViewport()
-        && element.matches(".info div, .info p");
+    const firstLineIndent = Math.min(getTypesetFirstLineIndent(element), Math.max(0, maxWidth - 1));
+    const options = { strategy, justify, firstLineIndent, forceDomMeasure };
+    const shouldUseRenderedJustify = justify
+        && element.matches(".info div, .info p")
+        && (useRenderedJustify || (typeof isMobileViewport === "function" && isMobileViewport()));
 
-    if (shouldUseMobileRenderedJustify) {
+    if (shouldUseRenderedJustify) {
         let calibration = 1;
         const maxCalibration = Math.max(1, TYPESET_MOBILE_MAX_WIDTH_CALIBRATION);
 
@@ -1533,10 +1590,21 @@ function typesetSingleLineFirstElement(element, options = {}) {
     }));
 }
 
-function applyPosterTypesetting(poster = document.getElementById("poster")) {
+function shouldUsePreviewRenderedJustify(poster) {
+    return Boolean(poster && poster.id === "poster");
+}
+
+function applyPosterTypesetting(poster = document.getElementById("poster"), options = {}) {
     const year = getPosterPart(poster, "year");
     const subtitle = getPosterPart(poster, "subtitle");
     const cards = getPosterPart(poster, "cards");
+    const isPreviewPoster = shouldUsePreviewRenderedJustify(poster);
+    const useRenderedJustify = options.useRenderedJustify != null
+        ? options.useRenderedJustify === true
+        : isPreviewPoster;
+    const forceDomMeasure = options.forceDomMeasure != null
+        ? options.forceDomMeasure === true
+        : isPreviewPoster;
 
     typesetTextElement(year);
 
@@ -1548,16 +1616,32 @@ function applyPosterTypesetting(poster = document.getElementById("poster")) {
     }
 
     if (cards) {
-        cards.querySelectorAll(".card").forEach(applyCardTypesetting);
+        cards.querySelectorAll(".card").forEach((card) => applyCardTypesetting(card, {
+            useRenderedJustify,
+            forceDomMeasure
+        }));
     }
 }
 
-function applyCardTypesetting(card) {
+function applyCardTypesetting(card, options = {}) {
     if (!card) return;
+
+    const poster = card.closest(".posterRoot");
+    const isPreviewPoster = shouldUsePreviewRenderedJustify(poster);
+    const useRenderedJustify = options.useRenderedJustify != null
+        ? options.useRenderedJustify === true
+        : isPreviewPoster;
+    const forceDomMeasure = options.forceDomMeasure != null
+        ? options.forceDomMeasure === true
+        : isPreviewPoster;
 
     card.querySelectorAll(".cardTitle").forEach((element) => typesetTextElement(element));
     card.querySelectorAll(".info > div, .info > p").forEach((element) => {
-        typesetTextElement(element, { justify: !element.classList.contains("contentHeading") });
+        typesetTextElement(element, {
+            justify: !element.classList.contains("contentHeading"),
+            useRenderedJustify,
+            forceDomMeasure
+        });
     });
 }
 
@@ -1692,7 +1776,10 @@ async function ensurePhoneRenderLayout() {
         setPosterSharedState(nextPoster);
         await waitForPosterImagesLoaded(nextPoster);
         syncHeadlineTextWidths(nextPoster);
-        applyPosterTypesetting(nextPoster);
+        applyPosterTypesetting(nextPoster, {
+            useRenderedJustify: true,
+            forceDomMeasure: true
+        });
         syncCardsOffset(nextPoster);
 
         phoneRenderPoster = nextPoster;

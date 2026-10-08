@@ -9,7 +9,7 @@ const ARTICLE_STATE_KEY_PREFIX = "article-summary-article:";
 const CHANGELOG_SEEN_DATE_STORAGE_KEY = "article-summary-changelog-seen-date";
 const CHANGELOG_URL = "CHANGELOG.md";
 const ARTICLE_INDEX_SCHEMA_VERSION = 1;
-const STATE_SCHEMA_VERSION = 21;
+const STATE_SCHEMA_VERSION = 22;
 const CONTENT_EDITOR_PLACEHOLDER = "输入段落内容...";
 const CARD_TITLE_PLACEHOLDER = "输入段落标题...";
 
@@ -768,7 +768,8 @@ const DEFAULT_ARTICLE_DATA = [
         hidden: false,
         lineSpacing: 1.8,
         paragraphSpacing: 0,
-        sideSpacing: 0
+        sideSpacing: 0,
+        firstLineIndent: false
     },
     {
         type: "text",
@@ -786,7 +787,8 @@ const DEFAULT_ARTICLE_DATA = [
         hidden: false,
         lineSpacing: 1.8,
         paragraphSpacing: 0,
-        sideSpacing: 0
+        sideSpacing: 0,
+        firstLineIndent: false
     }
 ];
 
@@ -855,6 +857,7 @@ const COPY_STYLE_CONTENT_KEYS = Object.freeze([
 ]);
 
 const {
+    CARD_TYPE_TEXT,
     CARD_TYPE_IMAGE,
     createTextCard,
     createImageCard,
@@ -880,6 +883,7 @@ const {
     getItemLineSpacing,
     getItemParagraphSpacing,
     getItemSideSpacing,
+    getItemFirstLineIndent,
     renderFontOptionElements,
     getTextColor: () => textColor
 });
@@ -1144,7 +1148,8 @@ function loadState() {
             ...item,
             lineSpacing: typeof item.lineSpacing === "number" ? item.lineSpacing : lineSpacing,
             paragraphSpacing: typeof item.paragraphSpacing === "number" ? item.paragraphSpacing : paragraphSpacing,
-            sideSpacing: typeof item.sideSpacing === "number" ? item.sideSpacing : 0
+            sideSpacing: typeof item.sideSpacing === "number" ? item.sideSpacing : 0,
+            firstLineIndent: item.firstLineIndent === true
         }));
 
         collapsedCardEditorIndexes.clear();
@@ -1561,6 +1566,10 @@ function getItemParagraphSpacing(item) {
 
 function getItemSideSpacing(item) {
     return typeof item.sideSpacing === "number" ? item.sideSpacing : 0;
+}
+
+function getItemFirstLineIndent(item) {
+    return item && item.firstLineIndent === true;
 }
 
 function autoResizeTextarea(element) {
@@ -3923,6 +3932,14 @@ function changeParagraphSideSpacing(index, value) {
     if (!data[index] || Number.isNaN(nextValue)) return;
 
     data[index].sideSpacing = Math.min(Math.max(nextValue, -120), 240);
+    scheduleCardPreviewRender(index);
+}
+
+function toggleFirstLineIndent(index) {
+    if (!data[index] || data[index].type !== CARD_TYPE_TEXT) return;
+
+    data[index].firstLineIndent = data[index].firstLineIndent !== true;
+    renderEditor();
     scheduleCardPreviewRender(index);
 }
 
