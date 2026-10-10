@@ -66,7 +66,7 @@
             line-height:1.7;
         }
     </style>
-    <link rel="stylesheet" href="style.css?v=20260928-1">
+    <link rel="stylesheet" href="style.css?v=20261009-2">
 </head>
 <body>
     <div id="unsupportedBrowserNotice" class="unsupportedBrowserNotice" role="alert">
@@ -199,8 +199,10 @@
                 <div id="textColorPalette" class="bgPalette"></div>
                 <div class="inlineFontLoader">
                     <button id="loadFontsBtn" type="button">读取本机字体</button>
+                    <input id="fontFileInput" class="fontFileInput" type="file" accept=".ttf,.otf,font/ttf,font/otf" multiple hidden>
                     <div id="fontStatus" class="fontStatus"></div>
                 </div>
+                <div id="importedFontList" class="importedFontList" aria-live="polite"></div>
                 <div id="textCustomColorPanel" class="customColorPanel" hidden>
                     <div class="customColorField" id="textColorField">
                         <span class="customColorFieldCursor" id="textColorFieldCursor"></span>
@@ -216,7 +218,7 @@
                         <label>B <input type="number" id="textBlueInput" min="0" max="255" value="17"></label>
                     </div>
                     <div class="customColorActions">
-                        <button type="button" class="customColorResetGlobal" onclick="resetRichTextColorFromPicker()" hidden>恢复全局颜色</button>
+                        <button type="button" class="customColorResetGlobal" onclick="resetActiveColorFromPicker()" hidden>恢复全局颜色</button>
                         <button type="button" class="customColorCancel" onclick="cancelTextCustomColor()">取消</button>
                         <button type="button" class="customColorApply" onclick="confirmTextCustomColor()">确认</button>
                     </div>
@@ -324,6 +326,7 @@
             <div class="headlineFontRow">
                 <select id="yearFontSelect" class="fontSelect blockFontSelect" onchange="changeYearFont(this.value,this)"></select>
                 <div id="yearAlignControls" class="headlineAlignControls"></div>
+                <button id="yearColorButton" class="titleColorButton richTextColorButton" type="button" title="标题颜色" aria-label="标题颜色" onclick="openTitleColorPicker('year',null,this)">A</button>
             </div>
             <textarea id="yearInput" rows="2" placeholder="输入标题..."></textarea>
         </div>
@@ -339,6 +342,7 @@
             <div class="headlineFontRow">
                 <select id="subtitleFontSelect" class="fontSelect blockFontSelect" onchange="changeSubtitleFont(this.value,this)"></select>
                 <div id="subtitleAlignControls" class="headlineAlignControls"></div>
+                <button id="subtitleColorButton" class="titleColorButton richTextColorButton" type="button" title="副标题颜色" aria-label="副标题颜色" onclick="openTitleColorPicker('subtitle',null,this)">A</button>
             </div>
             <textarea id="subtitleInput" rows="2" placeholder="输入副标题..."></textarea>
         </div>
@@ -351,7 +355,10 @@
                 <button id="sideHeaderToggleBtn" type="button" onclick="toggleSideHeader()">隐藏竖排标题</button>
                 <span id="sideSizeValue" class="sizeValue"></span>
             </label>
-            <select id="sideFontSelect" class="fontSelect blockFontSelect" onchange="changeSideFont(this.value,this)"></select>
+            <div class="headlineFontRow sideHeadlineFontRow">
+                <select id="sideFontSelect" class="fontSelect blockFontSelect" onchange="changeSideFont(this.value,this)"></select>
+                <button id="sideColorButton" class="titleColorButton richTextColorButton" type="button" title="竖排标题颜色" aria-label="竖排标题颜色" onclick="openTitleColorPicker('side',null,this)">A</button>
+            </div>
             <textarea id="sideInput" rows="2" placeholder="输入竖排标题..."></textarea>
         </div>
 
@@ -425,13 +432,13 @@
             var scripts = [
                 "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
                 "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
-                "paragraphs.js?v=20261008-1",
+                "paragraphs.js?v=20261009-1",
                 "image-store.js?v=20260826-1",
-                "layout.js?v=20261008-4",
+                "layout.js?v=20261009-1",
                 "export.js?v=20260920-1",
-                "article-workspace.js?v=20260916-1",
-                "rich-text-editor.js?v=20260919-2",
-                "script.js?v=20260928-1",
+                "article-workspace.js?v=20261009-1",
+                "rich-text-editor.js?v=20261008-1",
+                "script.js?v=20261009-1",
                 "analytics.js?v=20260915-1"
             ];
 

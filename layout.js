@@ -1660,6 +1660,9 @@ function getPhoneRenderSignature() {
         yearFontFamily,
         subtitleFontFamily,
         sideFontFamily,
+        yearTitleColor,
+        subtitleColor,
+        sideHeaderColor,
         yearTextAlign,
         subtitleTextAlign,
         lineSpacing,
@@ -1702,7 +1705,7 @@ function setPosterSharedState(poster, previewFontScale = getPreviewFontScale()) 
         year.innerText = (yearInput && yearInput.value) || "";
         year.dataset.shadowText = (yearInput && yearInput.value) || "";
         year.style.fontFamily = resolveYearFontFamily();
-        year.style.color = textColor;
+        year.style.color = resolveHeadlineColor("year");
         year.style.fontSize = `${globalFont.year * previewFontScale}px`;
         applyTextAlign(year, yearTextAlign);
         year.classList.remove("typesetText");
@@ -1711,7 +1714,7 @@ function setPosterSharedState(poster, previewFontScale = getPreviewFontScale()) 
     if (subtitle) {
         subtitle.innerText = (subtitleInputElement && subtitleInputElement.value) || "";
         subtitle.style.fontFamily = resolveSubtitleFontFamily();
-        subtitle.style.color = textColor;
+        subtitle.style.color = resolveHeadlineColor("subtitle");
         applySubtitleSettings(subtitle, previewFontScale);
         applyTextAlign(subtitle, subtitlePosition === "verticalLeft" ? "left" : subtitleTextAlign);
         subtitle.classList.remove("typesetText");
@@ -1721,7 +1724,7 @@ function setPosterSharedState(poster, previewFontScale = getPreviewFontScale()) 
     if (side) {
         side.innerText = (sideInput && sideInput.value) || "";
         side.style.fontFamily = resolveSideFontFamily();
-        side.style.color = textColor;
+        side.style.color = resolveHeadlineColor("side");
         side.style.fontSize = `${globalFont.side * previewFontScale}px`;
         renderVerticalTextTarget("side", (sideInput && sideInput.value) || "", poster);
     }

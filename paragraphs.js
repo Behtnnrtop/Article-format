@@ -44,6 +44,7 @@
                 titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
                 contentFontFamily: INHERIT_FONT_VALUE,
                 contentFontToolbarValue: INHERIT_FONT_VALUE,
+                titleColor: "",
                 contentColor: "",
                 titleAlign: "left",
                 textAlign: "left",
@@ -74,6 +75,7 @@
                 imageFit: "contain",
                 titleSize: 70,
                 titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
+                titleColor: "",
                 titleAlign: "left",
                 hidden: false,
                 paragraphSpacing: 0,
@@ -103,6 +105,7 @@
                     titlePlaceholder: CARD_TITLE_PLACEHOLDER,
                     titleSize: shouldNormalizeFontSizes ? Math.max(titleSize, 48) : titleSize,
                     titleFontFamily: typeof item.titleFontFamily === "string" ? item.titleFontFamily : CARD_TITLE_DEFAULT_FONT_FAMILY,
+                    titleColor: normalizeColorValue(item.titleColor),
                     titleAlign: normalizeTextAlign(item.titleAlign),
                     sideSpacing: typeof item.sideSpacing === "number" ? item.sideSpacing : 0,
                     hidden: item.hidden === true
@@ -320,8 +323,9 @@
             const itemParagraphSpacing = getItemParagraphSpacing(item);
             const itemSideSpacing = getItemSideSpacing(item);
             const titleAlign = normalizeTextAlign(item.titleAlign);
+            const titleColor = normalizeColorValue(item.titleColor) || getTextColor();
             const cardStyle = `--card-paragraph-spacing:${itemParagraphSpacing}px;--card-side-spacing:${itemSideSpacing}px`;
-            const titleHtml = `<div class="cardTitle" data-text-align="${titleAlign}" style="font-size:${item.titleSize * previewFontScale}px;font-family:${escapeHtml(resolveCardTitleFontFamily(item))};text-align:${titleAlign};">${titleText}</div>`;
+            const titleHtml = `<div class="cardTitle" data-text-align="${titleAlign}" style="font-size:${item.titleSize * previewFontScale}px;font-family:${escapeHtml(resolveCardTitleFontFamily(item))};color:${escapeHtml(titleColor)};text-align:${titleAlign};">${titleText}</div>`;
 
             if (isImageCard(item)) {
                 const images = Array.isArray(item.images) ? item.images : (item.imageDataUrl ? [item] : []);
@@ -410,6 +414,7 @@
                         title="选中文字颜色"
                         aria-label="选中文字颜色"
                         onmousedown="event.preventDefault()"
+                        onpointerdown="saveCurrentRichTextSelection(); event.preventDefault()"
                         onclick="openRichTextColorPicker(${index},this)">
                         A
                     </button>
@@ -421,6 +426,16 @@
                         onchange="applyRichTextFont(${index},this.value,this)">
                         ${contentFontOptions}
                     </select>
+                    <button
+                        type="button"
+                        class="richTextIndentButton${itemFirstLineIndent ? " active" : ""}"
+                        title="首行缩进 2 字"
+                        aria-label="首行缩进 2 字"
+                        aria-pressed="${itemFirstLineIndent ? "true" : "false"}"
+                        onmousedown="event.preventDefault()"
+                        onclick="toggleFirstLineIndent(${index})">
+                        <span class="richTextIndentIcon" aria-hidden="true"><span></span><span></span><span></span></span>
+                    </button>
                 </div>
                 <div
                     id="contentEditor-${index}"

@@ -7,9 +7,14 @@ const ARTICLE_INDEX_STORAGE_KEY = "article-summary-article-index";
 const CURRENT_ARTICLE_ID_STORAGE_KEY = "article-summary-current-article-id";
 const ARTICLE_STATE_KEY_PREFIX = "article-summary-article:";
 const CHANGELOG_SEEN_DATE_STORAGE_KEY = "article-summary-changelog-seen-date";
+const SYSTEM_FONT_CACHE_STORAGE_KEY = "article-summary-system-font-cache";
+const SYSTEM_FONT_CACHE_SCHEMA_VERSION = 1;
+const IMPORTED_FONT_DB_NAME = "article-summary-imported-fonts";
+const IMPORTED_FONT_DB_VERSION = 1;
+const IMPORTED_FONT_STORE_NAME = "fonts";
 const CHANGELOG_URL = "CHANGELOG.md";
 const ARTICLE_INDEX_SCHEMA_VERSION = 1;
-const STATE_SCHEMA_VERSION = 22;
+const STATE_SCHEMA_VERSION = 23;
 const CONTENT_EDITOR_PLACEHOLDER = "输入段落内容...";
 const CARD_TITLE_PLACEHOLDER = "输入段落标题...";
 
@@ -36,6 +41,9 @@ const INHERIT_FONT_VALUE = "__inherit__";
 let yearFontFamily = INHERIT_FONT_VALUE;
 let subtitleFontFamily = INHERIT_FONT_VALUE;
 let sideFontFamily = INHERIT_FONT_VALUE;
+let yearTitleColor = "";
+let subtitleColor = "";
+let sideHeaderColor = "";
 let yearTextAlign = "left";
 let subtitleTextAlign = "left";
 let lineSpacing = 1.8;
@@ -93,15 +101,117 @@ const phoneResolutions = {
     "1440x3200": { width: 1440, height: 3200, cssWidth: 480 }
 };
 let activeMobileEditorPanel = "style";
+let stableMobileViewportHeight = 0;
+let stableMobileViewportWidth = 0;
+let focusedEditableScrollTimer = null;
 
 function getViewportSize() {
     const viewport = window.visualViewport;
     const layoutWidth = window.innerWidth || document.documentElement.clientWidth || (viewport && viewport.width) || 0;
+    const layoutHeight = window.innerHeight || document.documentElement.clientHeight || (viewport && viewport.height) || 0;
 
     return {
         width: layoutWidth,
-        height: (viewport && viewport.height) || window.innerHeight
+        height: layoutHeight,
+        visualHeight: (viewport && viewport.height) || layoutHeight
     };
+}
+
+function isMobileChromeBrowser() {
+    const ua = navigator.userAgent || "";
+    const vendor = navigator.vendor || "";
+
+    if (!/Android/i.test(ua)) return false;
+    if (!/Chrome\//i.test(ua)) return false;
+    if (!/Google Inc\./i.test(vendor)) return false;
+    if (/\bwv\b|Version\/\d/i.test(ua)) return false;
+    if (/EdgA|OPR|SamsungBrowser|Firefox|FxiOS|UCBrowser|HuaweiBrowser|MQQBrowser|MiuiBrowser/i.test(ua)) return false;
+
+    return true;
+}
+
+function isKeyboardEditableElement(element) {
+    if (!element || element === document.body || element === document.documentElement) return false;
+    if (element.isContentEditable) return true;
+
+    const tagName = element.tagName;
+    if (tagName === "TEXTAREA") return true;
+    if (tagName !== "INPUT") return false;
+
+    const type = (element.getAttribute("type") || "text").toLowerCase();
+    const nonKeyboardTypes = {
+        button: true,
+        checkbox: true,
+        color: true,
+        file: true,
+        hidden: true,
+        image: true,
+        radio: true,
+        range: true,
+        reset: true,
+        submit: true
+    };
+    return !nonKeyboardTypes[type];
+}
+
+function getResponsiveViewportHeight(size) {
+    const layoutHeight = Math.round(size.height || size.visualHeight || 0);
+    const visualHeight = Math.round(size.visualHeight || layoutHeight || 0);
+    const width = Math.round(size.width || 0);
+
+    if (!isMobileViewport()) {
+        stableMobileViewportHeight = 0;
+        stableMobileViewportWidth = 0;
+        return layoutHeight;
+    }
+
+    if (!isMobileChromeBrowser()) {
+        stableMobileViewportHeight = 0;
+        stableMobileViewportWidth = 0;
+        return visualHeight;
+    }
+
+    const widthChanged = stableMobileViewportWidth && Math.abs(width - stableMobileViewportWidth) > 48;
+    const focusedEditable = isKeyboardEditableElement(document.activeElement);
+    const shrankWhileEditing = focusedEditable
+        && stableMobileViewportHeight
+        && layoutHeight < stableMobileViewportHeight - 120;
+
+    if (!stableMobileViewportHeight || widthChanged || !shrankWhileEditing) {
+        stableMobileViewportHeight = layoutHeight;
+        stableMobileViewportWidth = width;
+    }
+
+    return stableMobileViewportHeight || layoutHeight;
+}
+
+function scrollFocusedEditableIntoView() {
+    if (!isMobileViewport() || isMobileChromeBrowser()) return;
+
+    const element = document.activeElement;
+    if (!isKeyboardEditableElement(element)) return;
+    if (!element.scrollIntoView) return;
+
+    element.scrollIntoView({
+        block: "center",
+        inline: "nearest"
+    });
+}
+
+function scheduleFocusedEditableScroll() {
+    if (!isMobileViewport() || isMobileChromeBrowser()) return;
+    if (!isKeyboardEditableElement(document.activeElement)) return;
+
+    if (focusedEditableScrollTimer !== null) {
+        window.clearTimeout(focusedEditableScrollTimer);
+        focusedEditableScrollTimer = null;
+    }
+
+    requestAnimationFrame(scrollFocusedEditableIntoView);
+    focusedEditableScrollTimer = window.setTimeout(() => {
+        focusedEditableScrollTimer = null;
+        scrollFocusedEditableIntoView();
+    }, 260);
 }
 
 function isMobileViewport() {
@@ -118,7 +228,9 @@ function syncEditorWidthVariable() {
 }
 
 function applyResponsiveViewport() {
-    const { width, height } = getViewportSize();
+    const size = getViewportSize();
+    const width = size.width;
+    const height = getResponsiveViewportHeight(size);
     const root = document.documentElement;
 
     syncEditorWidthVariable();
@@ -324,15 +436,34 @@ const colorPickerControls = {
         commit: confirmRichTextColorPicker,
         cancel: cancelRichTextColorPicker,
         addRecent: () => {}
+    },
+    title: {
+        panel: document.getElementById("textCustomColorPanel"),
+        field: document.getElementById("textColorField"),
+        hue: document.getElementById("textHueRange"),
+        chip: document.getElementById("textColorPreviewChip"),
+        hex: document.getElementById("textHexInput"),
+        red: document.getElementById("textRedInput"),
+        green: document.getElementById("textGreenInput"),
+        blue: document.getElementById("textBlueInput"),
+        getValue: getTitleColorPickerValue,
+        preview: previewTitleColorPicker,
+        commit: commitTitleColorPicker,
+        cancel: cancelTitleColorPicker,
+        addRecent: (value) => {
+            recentTextColors = addRecentColor(recentTextColors, value);
+        }
     }
 };
 const customColorPickerState = {
     background: { hue: 0, saturation: 0, value: 0, originalColor: backgroundColor },
     text: { hue: 0, saturation: 0, value: 0, originalColor: textColor },
-    richText: { hue: 0, saturation: 0, value: 0, originalColor: textColor }
+    richText: { hue: 0, saturation: 0, value: 0, originalColor: textColor },
+    title: { hue: 0, saturation: 0, value: 0, originalColor: textColor }
 };
 let activeCustomColorTarget = null;
 let richTextColorPickerContext = null;
+let titleColorPickerContext = null;
 let richTextColorPreviewState = null;
 let changelogLoadPromise = null;
 let changelogState = {
@@ -683,6 +814,10 @@ const fallbackFontOptions = [
 
 let fontOptions = [...fallbackFontOptions];
 let systemFontOptions = [];
+let importedFonts = [];
+let importedFontOptions = [];
+let importedFontDbPromise = null;
+const importedFontLoadPromises = {};
 const defaultInheritedFontOption = {
     label: "默认字体",
     value: INHERIT_FONT_VALUE,
@@ -762,6 +897,7 @@ const DEFAULT_ARTICLE_DATA = [
         titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
         contentFontFamily: INHERIT_FONT_VALUE,
         contentFontToolbarValue: INHERIT_FONT_VALUE,
+        titleColor: "",
         contentColor: "",
         titleAlign: "left",
         textAlign: "left",
@@ -781,6 +917,7 @@ const DEFAULT_ARTICLE_DATA = [
         titleFontFamily: CARD_TITLE_DEFAULT_FONT_FAMILY,
         contentFontFamily: INHERIT_FONT_VALUE,
         contentFontToolbarValue: INHERIT_FONT_VALUE,
+        titleColor: "",
         contentColor: "",
         titleAlign: "left",
         textAlign: "left",
@@ -831,6 +968,9 @@ const COPY_STYLE_STATE_KEYS = Object.freeze([
     "yearFontFamily",
     "subtitleFontFamily",
     "sideFontFamily",
+    "yearTitleColor",
+    "subtitleColor",
+    "sideHeaderColor",
     "yearTextAlign",
     "subtitleTextAlign",
     "sideSpacing",
@@ -968,6 +1108,9 @@ function createBlankPersistedState() {
         yearFontFamily: INHERIT_FONT_VALUE,
         subtitleFontFamily: INHERIT_FONT_VALUE,
         sideFontFamily: INHERIT_FONT_VALUE,
+        yearTitleColor: "",
+        subtitleColor: "",
+        sideHeaderColor: "",
         yearTextAlign: "left",
         subtitleTextAlign: "left",
         lineSpacing: 1.8,
@@ -1015,6 +1158,9 @@ function resetRuntimeState() {
     yearFontFamily = INHERIT_FONT_VALUE;
     subtitleFontFamily = INHERIT_FONT_VALUE;
     sideFontFamily = INHERIT_FONT_VALUE;
+    yearTitleColor = "";
+    subtitleColor = "";
+    sideHeaderColor = "";
     yearTextAlign = "left";
     subtitleTextAlign = "left";
     lineSpacing = 1.8;
@@ -1108,6 +1254,10 @@ function loadState() {
         if (typeof state.sideFontFamily === "string") {
             sideFontFamily = state.sideFontFamily;
         }
+
+        yearTitleColor = normalizeColorValue(state.yearTitleColor);
+        subtitleColor = normalizeColorValue(state.subtitleColor);
+        sideHeaderColor = normalizeColorValue(state.sideHeaderColor);
 
         yearTextAlign = normalizeTextAlign(state.yearTextAlign);
         subtitleTextAlign = normalizeTextAlign(state.subtitleTextAlign);
@@ -1636,6 +1786,9 @@ function buildPersistedState() {
         yearFontFamily,
         subtitleFontFamily,
         sideFontFamily,
+        yearTitleColor,
+        subtitleColor,
+        sideHeaderColor,
         yearTextAlign,
         subtitleTextAlign,
         lineSpacing,
@@ -2033,6 +2186,420 @@ function getFontDisplayLabel(family, fullNames = []) {
     return chineseFontLabels.get(normalizedFamily) || localizedName || family;
 }
 
+function updateSystemFontLoaderUi() {
+    const loadFontsBtn = document.getElementById("loadFontsBtn");
+    if (!loadFontsBtn || loadFontsBtn.disabled) return;
+
+    loadFontsBtn.innerText = !isMobileViewport() && systemFontOptions.length > 0
+        ? "刷新本机字体"
+        : "读取本机字体";
+}
+
+function rebuildFontOptions() {
+    fontOptions = [
+        ...fallbackFontOptions,
+        ...systemFontOptions,
+        ...importedFontOptions
+    ];
+}
+
+function applySystemFontOptions(nextSystemFontOptions) {
+    systemFontOptions = Array.isArray(nextSystemFontOptions) ? nextSystemFontOptions : [];
+    rebuildFontOptions();
+    updateSystemFontLoaderUi();
+}
+
+function buildSystemFontOptions(fonts) {
+    const fontGroups = new Map();
+
+    Array.from(fonts || []).forEach((font) => {
+        if (!font || !font.family) return;
+
+        if (!fontGroups.has(font.family)) {
+            fontGroups.set(font.family, []);
+        }
+
+        if (font.fullName) {
+            fontGroups.get(font.family).push(font.fullName);
+        }
+    });
+
+    return Array.from(fontGroups.entries())
+        .map(([family, fullNames]) => ({
+            label: getFontDisplayLabel(family, fullNames),
+            value: quoteCssFontFamily(family)
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label, "zh-Hans-CN"));
+}
+
+function normalizeCachedSystemFontOptions(value) {
+    if (!Array.isArray(value)) return [];
+
+    return value
+        .map((option) => {
+            if (!option || typeof option.label !== "string" || typeof option.value !== "string") return null;
+
+            const label = option.label.trim();
+            const fontValue = sanitizeFontFamilyValue(option.value);
+            if (!label || !fontValue) return null;
+
+            return {
+                label,
+                value: fontValue
+            };
+        })
+        .filter(Boolean);
+}
+
+function saveSystemFontCache(nextSystemFontOptions) {
+    try {
+        localStorage.setItem(SYSTEM_FONT_CACHE_STORAGE_KEY, JSON.stringify({
+            schemaVersion: SYSTEM_FONT_CACHE_SCHEMA_VERSION,
+            updatedAt: Date.now(),
+            fonts: nextSystemFontOptions
+        }));
+    } catch (error) {
+        console.warn("System font cache save failed", error);
+    }
+}
+
+function loadCachedSystemFonts() {
+    try {
+        const raw = localStorage.getItem(SYSTEM_FONT_CACHE_STORAGE_KEY);
+        if (!raw) return false;
+
+        const cached = JSON.parse(raw);
+        if (!cached || cached.schemaVersion !== SYSTEM_FONT_CACHE_SCHEMA_VERSION) return false;
+
+        const cachedSystemFontOptions = normalizeCachedSystemFontOptions(cached.fonts);
+        if (cachedSystemFontOptions.length === 0) return false;
+
+        applySystemFontOptions(cachedSystemFontOptions);
+        setFontStatus(`已加载上次读取的 ${cachedSystemFontOptions.length} 个本机字体，如有新增字体，可点击刷新。`);
+        return true;
+    } catch (error) {
+        console.warn("System font cache load failed", error);
+        return false;
+    }
+}
+
+function supportsImportedFontStorage() {
+    return "indexedDB" in window && "FontFace" in window;
+}
+
+function openImportedFontDb() {
+    if (!supportsImportedFontStorage()) {
+        return Promise.reject(new Error("Imported font storage is not supported"));
+    }
+
+    if (importedFontDbPromise) return importedFontDbPromise;
+
+    importedFontDbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(IMPORTED_FONT_DB_NAME, IMPORTED_FONT_DB_VERSION);
+
+        request.onupgradeneeded = function () {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(IMPORTED_FONT_STORE_NAME)) {
+                db.createObjectStore(IMPORTED_FONT_STORE_NAME, { keyPath: "id" });
+            }
+        };
+
+        request.onsuccess = function () {
+            resolve(request.result);
+        };
+
+        request.onerror = function () {
+            reject(request.error || new Error("Open imported font database failed"));
+        };
+    });
+
+    return importedFontDbPromise;
+}
+
+function readImportedFontRecords() {
+    return openImportedFontDb().then((db) => new Promise((resolve, reject) => {
+        const transaction = db.transaction(IMPORTED_FONT_STORE_NAME, "readonly");
+        const store = transaction.objectStore(IMPORTED_FONT_STORE_NAME);
+        const request = store.getAll();
+
+        request.onsuccess = function () {
+            resolve(Array.isArray(request.result) ? request.result : []);
+        };
+
+        request.onerror = function () {
+            reject(request.error || new Error("Read imported fonts failed"));
+        };
+    }));
+}
+
+function saveImportedFontRecord(record) {
+    return openImportedFontDb().then((db) => new Promise((resolve, reject) => {
+        const transaction = db.transaction(IMPORTED_FONT_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(IMPORTED_FONT_STORE_NAME);
+
+        store.put(record);
+
+        transaction.oncomplete = function () {
+            resolve();
+        };
+
+        transaction.onerror = function () {
+            reject(transaction.error || new Error("Save imported font failed"));
+        };
+    }));
+}
+
+function deleteImportedFontRecord(id) {
+    return openImportedFontDb().then((db) => new Promise((resolve, reject) => {
+        const transaction = db.transaction(IMPORTED_FONT_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(IMPORTED_FONT_STORE_NAME);
+
+        store.delete(id);
+
+        transaction.oncomplete = function () {
+            resolve();
+        };
+
+        transaction.onerror = function () {
+            reject(transaction.error || new Error("Delete imported font failed"));
+        };
+    }));
+}
+
+function readFileAsArrayBuffer(file) {
+    if (file && typeof file.arrayBuffer === "function") {
+        return file.arrayBuffer();
+    }
+
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = function () {
+            resolve(reader.result);
+        };
+        reader.onerror = function () {
+            reject(reader.error || new Error("Read font file failed"));
+        };
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+function getImportedFontFileExtension(fileName) {
+    const match = /\.([^.]+)$/.exec(String(fileName || "").toLowerCase());
+    return match ? match[1] : "";
+}
+
+function isSupportedImportedFontFile(file) {
+    const extension = getImportedFontFileExtension(file && file.name);
+    return extension === "ttf" || extension === "otf";
+}
+
+function getImportedFontDisplayName(fileName) {
+    return String(fileName || "导入字体")
+        .replace(/\.(ttf|otf)$/i, "")
+        .trim() || "导入字体";
+}
+
+function createImportedFontId(file) {
+    const randomPart = Math.random().toString(36).slice(2);
+    const modified = file && typeof file.lastModified === "number" ? file.lastModified : Date.now();
+    return `imported-font-${Date.now()}-${modified}-${randomPart}`;
+}
+
+function getImportedFontFamilyName(id) {
+    return `ArticleSummaryImportedFont_${String(id).replace(/[^\w-]/g, "_")}`;
+}
+
+function normalizeImportedFontRecord(record) {
+    if (!record || typeof record.id !== "string" || !record.buffer) return null;
+
+    const id = record.id;
+    const familyName = typeof record.familyName === "string" && record.familyName
+        ? record.familyName
+        : getImportedFontFamilyName(id);
+    const label = typeof record.label === "string" && record.label.trim()
+        ? record.label.trim()
+        : "导入字体";
+
+    return {
+        id,
+        label,
+        familyName,
+        fileName: typeof record.fileName === "string" ? record.fileName : label,
+        size: typeof record.size === "number" ? record.size : 0,
+        type: typeof record.type === "string" ? record.type : "",
+        importedAt: typeof record.importedAt === "number" ? record.importedAt : Date.now(),
+        buffer: record.buffer
+    };
+}
+
+function rebuildImportedFontOptions() {
+    importedFontOptions = importedFonts.map((font) => ({
+        label: font.label,
+        value: quoteCssFontFamily(font.familyName),
+        importedFontId: font.id,
+        dedupeSystemFont: false
+    }));
+    rebuildFontOptions();
+}
+
+function renderImportedFontList() {
+    const listEl = document.getElementById("importedFontList");
+    if (!listEl) return;
+
+    if (importedFonts.length === 0) {
+        listEl.innerHTML = "";
+        return;
+    }
+
+    listEl.innerHTML = importedFonts
+        .map((font) => {
+            const sizeLabel = font.size ? ` · ${Math.max(1, Math.round(font.size / 1024))}KB` : "";
+            return `
+                <div class="importedFontItem">
+                    <span class="importedFontName" style="font-family:${escapeHtml(quoteCssFontFamily(font.familyName))};">${escapeHtml(font.label)}${escapeHtml(sizeLabel)}</span>
+                    <button type="button" class="importedFontRemoveBtn" onclick="removeImportedFont('${escapeHtml(font.id)}')">移除</button>
+                </div>
+            `;
+        })
+        .join("");
+}
+
+function registerImportedFont(record) {
+    const normalized = normalizeImportedFontRecord(record);
+    if (!normalized) return Promise.reject(new Error("Invalid imported font record"));
+
+    if (importedFontLoadPromises[normalized.id]) return importedFontLoadPromises[normalized.id];
+
+    importedFontLoadPromises[normalized.id] = new Promise((resolve, reject) => {
+        try {
+            const fontFace = new FontFace(normalized.familyName, normalized.buffer);
+            fontFace.load()
+                .then((loadedFontFace) => {
+                    document.fonts.add(loadedFontFace);
+                    normalized.fontFace = loadedFontFace;
+                    resolve(normalized);
+                })
+                .catch(reject);
+        } catch (error) {
+            reject(error);
+        }
+    });
+
+    return importedFontLoadPromises[normalized.id];
+}
+
+function upsertImportedFont(font) {
+    const nextFonts = importedFonts.filter((item) => item.id !== font.id);
+    nextFonts.push(font);
+    importedFonts = nextFonts.sort((a, b) => a.importedAt - b.importedAt);
+    rebuildImportedFontOptions();
+    renderImportedFontList();
+}
+
+async function importFontFiles(files) {
+    const selectedFiles = Array.from(files || []);
+    if (selectedFiles.length === 0) return;
+
+    if (!supportsImportedFontStorage()) {
+        setFontStatus("当前浏览器不支持字体文件缓存，请使用新版 Chrome、Edge 或 Safari。");
+        return;
+    }
+
+    let importedCount = 0;
+    let skippedCount = 0;
+
+    setFontStatus("正在导入字体...");
+
+    for (const file of selectedFiles) {
+        if (!isSupportedImportedFontFile(file)) {
+            skippedCount += 1;
+            continue;
+        }
+
+        try {
+            const id = createImportedFontId(file);
+            const buffer = await readFileAsArrayBuffer(file);
+            const record = {
+                id,
+                label: getImportedFontDisplayName(file.name),
+                familyName: getImportedFontFamilyName(id),
+                fileName: file.name,
+                size: file.size,
+                type: getImportedFontFileExtension(file.name),
+                importedAt: Date.now(),
+                buffer
+            };
+            const loadedFont = await registerImportedFont(record);
+
+            await saveImportedFontRecord(record);
+            upsertImportedFont(loadedFont);
+            importedCount += 1;
+        } catch (error) {
+            console.warn("Import font failed", error);
+            skippedCount += 1;
+        }
+    }
+
+    renderEditor();
+    const skippedMessage = skippedCount > 0 ? `，${skippedCount} 个文件未导入` : "";
+    setFontStatus(importedCount > 0 ? `已导入 ${importedCount} 个字体${skippedMessage}。` : "没有导入字体，请选择 ttf 或 otf 文件。");
+}
+
+async function loadCachedImportedFonts() {
+    if (!supportsImportedFontStorage()) {
+        renderImportedFontList();
+        return;
+    }
+
+    try {
+        const records = await readImportedFontRecords();
+        const loadedFonts = [];
+
+        for (const record of records) {
+            try {
+                const loadedFont = await registerImportedFont(record);
+                loadedFonts.push(loadedFont);
+            } catch (error) {
+                console.warn("Load imported font failed", error);
+            }
+        }
+
+        importedFonts = loadedFonts.sort((a, b) => a.importedAt - b.importedAt);
+        rebuildImportedFontOptions();
+        renderImportedFontList();
+
+        if (importedFonts.length > 0) {
+            setFontStatus(`已加载 ${importedFonts.length} 个导入字体。`);
+        }
+    } catch (error) {
+        console.warn("Load imported fonts failed", error);
+        setFontStatus("导入字体缓存读取失败，可重新选择字体文件。");
+    }
+}
+
+async function removeImportedFont(id) {
+    const target = importedFonts.find((font) => font.id === id);
+    if (!target) return;
+
+    try {
+        await deleteImportedFontRecord(id);
+
+        if (target.fontFace && document.fonts && typeof document.fonts.delete === "function") {
+            document.fonts.delete(target.fontFace);
+        }
+
+        delete importedFontLoadPromises[id];
+        importedFonts = importedFonts.filter((font) => font.id !== id);
+        rebuildImportedFontOptions();
+        renderImportedFontList();
+        renderEditor();
+        setFontStatus(`已移除 ${target.label}。`);
+    } catch (error) {
+        console.warn("Remove imported font failed", error);
+        setFontStatus("移除字体失败，请稍后再试。");
+    }
+}
+
 function resolveCardTitleFontFamily(item) {
     return (item && item.titleFontFamily) || CARD_TITLE_DEFAULT_FONT_FAMILY;
 }
@@ -2051,6 +2618,17 @@ function resolveSubtitleFontFamily() {
 
 function resolveSideFontFamily() {
     return resolvePosterTextFontFamily(sideFontFamily);
+}
+
+function resolveHeadlineColor(target) {
+    if (target === "year") return normalizeColorValue(yearTitleColor) || textColor;
+    if (target === "subtitle") return normalizeColorValue(subtitleColor) || textColor;
+    if (target === "side") return normalizeColorValue(sideHeaderColor) || textColor;
+    return textColor;
+}
+
+function resolveCardTitleColor(item) {
+    return normalizeColorValue(item && item.titleColor) || textColor;
 }
 
 function normalizeTextAlign(value) {
@@ -2164,6 +2742,25 @@ function renderTextAlignControls(target, selectedValue, { disabled = false } = {
     `;
 }
 
+function renderTitleColorButton(scope, index = null, label = "标题颜色") {
+    const color = scope === "cardTitle"
+        ? resolveCardTitleColor(data[index])
+        : resolveHeadlineColor(scope);
+    const indexArg = index == null ? "null" : String(index);
+
+    return `
+        <button
+            type="button"
+            class="titleColorButton richTextColorButton"
+            style="--rich-text-color:${escapeHtml(color)};"
+            title="${escapeHtml(label)}"
+            aria-label="${escapeHtml(label)}"
+            onclick="openTitleColorPicker('${escapeHtml(scope)}',${indexArg},this)">
+            A
+        </button>
+    `;
+}
+
 function resolveCardContentFontFamily(item) {
     return item && item.contentFontFamily && item.contentFontFamily !== INHERIT_FONT_VALUE
         ? item.contentFontFamily
@@ -2210,7 +2807,8 @@ function getRenderableFontOptions(baseOptions = fontOptions) {
 
     [
         ...baseOptions,
-        ...systemFontOptions.filter((option) => !shouldDedupeSystemFontOption(option, baseOptions))
+        ...systemFontOptions.filter((option) => !shouldDedupeSystemFontOption(option, baseOptions)),
+        ...importedFontOptions
     ].forEach((option) => {
         if (!option || !option.value || optionMap.has(option.value)) return;
         optionMap.set(option.value, option);
@@ -2281,44 +2879,46 @@ async function loadSystemFonts() {
         setFontStatus("正在请求本机字体权限...");
 
         const fonts = await window.queryLocalFonts();
-        const fontGroups = new Map();
+        const loadedSystemFontOptions = buildSystemFontOptions(fonts);
 
-        fonts.forEach((font) => {
-            if (!font.family) return;
-
-            if (!fontGroups.has(font.family)) {
-                fontGroups.set(font.family, []);
-            }
-
-            if (font.fullName) {
-                fontGroups.get(font.family).push(font.fullName);
-            }
-        });
-
-        const loadedSystemFontOptions = Array.from(fontGroups.entries())
-            .map(([family, fullNames]) => ({
-                label: getFontDisplayLabel(family, fullNames),
-                value: quoteCssFontFamily(family)
-            }))
-            .sort((a, b) => a.label.localeCompare(b.label, "zh-Hans-CN"));
-
-        systemFontOptions = loadedSystemFontOptions;
-
-        fontOptions = [
-            ...fallbackFontOptions,
-            ...systemFontOptions
-        ];
-
+        applySystemFontOptions(loadedSystemFontOptions);
+        saveSystemFontCache(loadedSystemFontOptions);
         renderEditor();
-        setFontStatus(`已读取 ${loadedSystemFontOptions.length} 个本机字体。`);
+        setFontStatus(`已更新 ${loadedSystemFontOptions.length} 个本机字体。`);
     } catch (error) {
         const denied = error && (error.name === "NotAllowedError" || error.name === "SecurityError");
-        setFontStatus(denied ? "没有获得本机字体权限，已保留默认字体列表。" : "读取本机字体失败，已保留默认字体列表。");
+        const fallbackMessage = systemFontOptions.length > 0 ? "已保留上次读取的字体列表。" : "已保留默认字体列表。";
+        setFontStatus(denied ? `没有获得本机字体权限，${fallbackMessage}` : `读取本机字体失败，${fallbackMessage}`);
     } finally {
         if (loadFontsBtn) {
             loadFontsBtn.disabled = false;
-            loadFontsBtn.innerText = "读取本机字体";
+            updateSystemFontLoaderUi();
         }
+    }
+}
+
+function openFontFilePicker() {
+    const fontFileInput = document.getElementById("fontFileInput");
+    if (!fontFileInput) return;
+
+    fontFileInput.click();
+}
+
+function handleLoadFontsClick() {
+    if (!isMobileViewport() && "queryLocalFonts" in window) {
+        loadSystemFonts();
+        return;
+    }
+
+    openFontFilePicker();
+}
+
+function handleFontFileInputChange(event) {
+    const input = event && event.target;
+    importFontFiles(input ? input.files : []);
+
+    if (input) {
+        input.value = "";
     }
 }
 
@@ -2459,7 +3059,7 @@ function renderHeaderInputPreview() {
         yearElement.innerText = yearText;
         yearElement.dataset.shadowText = yearText;
         yearElement.style.fontFamily = resolveYearFontFamily();
-        yearElement.style.color = textColor;
+        yearElement.style.color = resolveHeadlineColor("year");
         yearElement.style.fontSize = globalFont.year * previewFontScale + "px";
         applyTextAlign(yearElement, yearTextAlign);
     }
@@ -2467,7 +3067,7 @@ function renderHeaderInputPreview() {
     if (subtitleElement) {
         subtitleElement.classList.remove("typesetText");
         subtitleElement.style.fontFamily = resolveSubtitleFontFamily();
-        subtitleElement.style.color = textColor;
+        subtitleElement.style.color = resolveHeadlineColor("subtitle");
         applySubtitleSettings(subtitleElement, previewFontScale);
         applyTextAlign(subtitleElement, subtitlePosition === "verticalLeft" ? "left" : subtitleTextAlign);
         renderVerticalTextTarget("subtitle");
@@ -2475,6 +3075,7 @@ function renderHeaderInputPreview() {
 
     if (sideElement) {
         sideElement.style.fontFamily = resolveSideFontFamily();
+        sideElement.style.color = resolveHeadlineColor("side");
         sideElement.style.fontSize = globalFont.side * previewFontScale + "px";
         renderVerticalTextTarget("side");
     }
@@ -2531,11 +3132,12 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
     yearElement.innerText = yearText;
     yearElement.dataset.shadowText = yearText;
     yearElement.style.fontFamily = resolveYearFontFamily();
-    yearElement.style.color = textColor;
+    yearElement.style.color = resolveHeadlineColor("year");
     applyTextAlign(yearElement, yearTextAlign);
 
     const sideElement = document.getElementById("side");
     sideElement.style.fontFamily = resolveSideFontFamily();
+    sideElement.style.color = resolveHeadlineColor("side");
     sideElement.style.fontSize = globalFont.side * previewFontScale + "px";
 
     renderVerticalTextTarget("side");
@@ -2570,7 +3172,7 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
         subtitleElement.classList.remove("typesetText");
         subtitleElement.innerText = subtitleText;
         subtitleElement.style.fontFamily = resolveSubtitleFontFamily();
-        subtitleElement.style.color = textColor;
+        subtitleElement.style.color = resolveHeadlineColor("subtitle");
         applySubtitleSettings(subtitleElement, previewFontScale);
         applyTextAlign(subtitleElement, subtitlePosition === "verticalLeft" ? "left" : subtitleTextAlign);
     }
@@ -2762,8 +3364,9 @@ function renderEditor() {
                     <div class="headlineAlignControls" data-align-control-target="cardTitle:${index}">
                         ${renderTextAlignControls(`cardTitle:${index}`, item.titleAlign)}
                     </div>
+                    ${renderTitleColorButton("cardTitle", index, "段落标题颜色")}
                 </div>
-                <textarea rows="2" class="cardTitleInput" placeholder="${escapeHtml(item.titlePlaceholder || CARD_TITLE_PLACEHOLDER)}" style="font-family:${escapeHtml(titleFontFamily)};" oninput="autoResizeTextarea(this);changeTitle(${index},this.value)">${titleText}</textarea>
+                <textarea rows="2" class="cardTitleInput" placeholder="${escapeHtml(item.titlePlaceholder || CARD_TITLE_PLACEHOLDER)}" style="font-family:${escapeHtml(titleFontFamily)};color:${escapeHtml(resolveCardTitleColor(item))};" oninput="autoResizeTextarea(this);changeTitle(${index},this.value)">${titleText}</textarea>
                 ${cardBodyHtml}
             </div>
         </div>
@@ -2786,6 +3389,7 @@ function renderHeadlineFontControls() {
             inputId: "yearInput",
             selectedValue: yearFontFamily,
             resolvedFontFamily: resolveYearFontFamily(),
+            resolvedColor: resolveHeadlineColor("year"),
             fontOptions: defaultPosterFontOptions
         },
         {
@@ -2793,6 +3397,7 @@ function renderHeadlineFontControls() {
             inputId: "subtitleInput",
             selectedValue: subtitleFontFamily,
             resolvedFontFamily: resolveSubtitleFontFamily(),
+            resolvedColor: resolveHeadlineColor("subtitle"),
             fontOptions: defaultPosterFontOptions
         },
         {
@@ -2800,6 +3405,7 @@ function renderHeadlineFontControls() {
             inputId: "sideInput",
             selectedValue: sideFontFamily,
             resolvedFontFamily: resolveSideFontFamily(),
+            resolvedColor: resolveHeadlineColor("side"),
             fontOptions: defaultPosterFontOptions
         }
     ];
@@ -2816,6 +3422,7 @@ function renderHeadlineFontControls() {
 
         if (inputEl) {
             inputEl.style.fontFamily = control.resolvedFontFamily;
+            inputEl.style.color = control.resolvedColor;
         }
     });
 
@@ -2830,6 +3437,10 @@ function renderHeadlineFontControls() {
             disabled: subtitlePosition === "verticalLeft"
         });
     }
+
+    updateTitleColorButton(document.getElementById("yearColorButton"), resolveHeadlineColor("year"));
+    updateTitleColorButton(document.getElementById("subtitleColorButton"), resolveHeadlineColor("subtitle"));
+    updateTitleColorButton(document.getElementById("sideColorButton"), resolveHeadlineColor("side"));
 }
 
 function renderBackgroundPalette() {
@@ -3219,6 +3830,10 @@ function saveRichTextSelection(index) {
     richTextEditor.saveRichTextSelection(index);
 }
 
+function saveCurrentRichTextSelection() {
+    return richTextEditor.saveCurrentRichTextSelection();
+}
+
 function restoreRichTextSelection(index) {
     return richTextEditor.restoreRichTextSelection(index);
 }
@@ -3293,6 +3908,141 @@ function applyRichTextSelectedColor(index, range, value) {
 
 function applyRichTextParagraphColor(index, value) {
     return richTextEditor.applyRichTextParagraphColor(index, value);
+}
+
+function getTitleColorContextColor(context, { inheritGlobal = true } = {}) {
+    if (!context) return inheritGlobal ? textColor : "";
+
+    if (context.scope === "year") {
+        return normalizeColorValue(yearTitleColor) || (inheritGlobal ? textColor : "");
+    }
+    if (context.scope === "subtitle") {
+        return normalizeColorValue(subtitleColor) || (inheritGlobal ? textColor : "");
+    }
+    if (context.scope === "side") {
+        return normalizeColorValue(sideHeaderColor) || (inheritGlobal ? textColor : "");
+    }
+    if (context.scope === "cardTitle" && data[context.index]) {
+        return normalizeColorValue(data[context.index].titleColor) || (inheritGlobal ? textColor : "");
+    }
+
+    return inheritGlobal ? textColor : "";
+}
+
+function setTitleColorForContext(context, value) {
+    if (!context) return false;
+
+    const selectedColor = normalizeColorValue(value);
+
+    if (context.scope === "year") {
+        yearTitleColor = selectedColor;
+        return true;
+    }
+    if (context.scope === "subtitle") {
+        subtitleColor = selectedColor;
+        return true;
+    }
+    if (context.scope === "side") {
+        sideHeaderColor = selectedColor;
+        return true;
+    }
+    if (context.scope === "cardTitle" && data[context.index]) {
+        data[context.index].titleColor = selectedColor;
+        return true;
+    }
+
+    return false;
+}
+
+function updateTitleColorButton(button, color) {
+    if (!button) return;
+
+    button.style.setProperty("--rich-text-color", normalizeColorValue(color) || textColor);
+}
+
+function getTitleColorPickerValue() {
+    if (titleColorPickerContext && titleColorPickerContext.pendingColor) {
+        return titleColorPickerContext.pendingColor;
+    }
+
+    return getTitleColorContextColor(titleColorPickerContext);
+}
+
+function refreshTitleColorPreview(context) {
+    if (!context) return;
+
+    if (context.scope === "cardTitle") {
+        scheduleCardPreviewRender(context.index);
+        const block = document.querySelector(`.block[data-card-editor-index="${context.index}"]`);
+        const titleInput = block ? block.querySelector(".cardTitleInput") : null;
+        if (titleInput && data[context.index]) {
+            titleInput.style.color = resolveCardTitleColor(data[context.index]);
+        }
+    } else {
+        renderHeaderInputPreview();
+        const input = document.getElementById(`${context.scope === "side" ? "side" : context.scope}Input`);
+        if (input) {
+            input.style.color = resolveHeadlineColor(context.scope);
+        }
+    }
+
+    updateTitleColorButton(context.button, getTitleColorContextColor(context));
+}
+
+function previewTitleColorPicker(value) {
+    const selectedColor = normalizeColorValue(value);
+    if (!selectedColor || !titleColorPickerContext) return;
+
+    titleColorPickerContext.pendingColor = selectedColor;
+    setTitleColorForContext(titleColorPickerContext, selectedColor);
+    refreshTitleColorPreview(titleColorPickerContext);
+}
+
+function cancelTitleColorPicker(_originalColor) {
+    if (!titleColorPickerContext) return;
+
+    setTitleColorForContext(titleColorPickerContext, titleColorPickerContext.originalColor || "");
+    refreshTitleColorPreview(titleColorPickerContext);
+    titleColorPickerContext = null;
+}
+
+function commitTitleColorPicker() {
+    if (!titleColorPickerContext) return;
+
+    refreshTitleColorPreview(titleColorPickerContext);
+    renderTextColorPalette();
+    schedulePhonePreviewSync();
+    saveState();
+    titleColorPickerContext = null;
+}
+
+function openTitleColorPicker(scope, index = null, button = null) {
+    const context = {
+        scope,
+        index: Number.isInteger(Number(index)) ? Number(index) : null,
+        button,
+        originalColor: "",
+        pendingColor: ""
+    };
+    context.originalColor = getTitleColorContextColor(context, { inheritGlobal: false });
+    context.pendingColor = getTitleColorContextColor(context);
+
+    titleColorPickerContext = context;
+    openCustomColorPanel("title");
+    scheduleRichTextColorPanelPosition(colorPickerControls.title.panel, button);
+}
+
+function resetTitleColorFromPicker() {
+    if (!titleColorPickerContext) return;
+
+    const context = titleColorPickerContext;
+    setTitleColorForContext(context, "");
+    refreshTitleColorPreview(context);
+    closeCustomColorPanels();
+    renderTextColorPalette();
+    schedulePhonePreviewSync();
+    saveState();
+    titleColorPickerContext = null;
 }
 
 function getRichTextColorPickerValue() {
@@ -3394,6 +4144,15 @@ function resetRichTextColorFromPicker() {
     resetRichTextColorWithContext(context);
 }
 
+function resetActiveColorFromPicker() {
+    if (activeCustomColorTarget === "title") {
+        resetTitleColorFromPicker();
+        return;
+    }
+
+    resetRichTextColorFromPicker();
+}
+
 function getRichTextColorPanelPosition(button, panel) {
     if (!button || !panel || !button.getBoundingClientRect) return null;
 
@@ -3437,6 +4196,7 @@ function openRichTextColorPicker(index, button = null) {
     if (!editorEl || !data[index]) return;
 
     clearRichTextColorPreviewState();
+    saveCurrentRichTextSelection();
 
     const savedRange = getSavedRichTextRange(index);
     const selectedColor = normalizeColorValue(data[index].contentColor) || textColor;
@@ -3546,7 +4306,9 @@ function getCustomPickerConfig(target) {
 }
 
 function getCustomPickerEventTarget(target) {
-    return target === "text" && activeCustomColorTarget === "richText" ? "richText" : target;
+    return target === "text" && (activeCustomColorTarget === "richText" || activeCustomColorTarget === "title")
+        ? activeCustomColorTarget
+        : target;
 }
 
 function updateCustomPickerUi(target, { preview = true } = {}) {
@@ -3659,18 +4421,18 @@ function openCustomColorPanel(target) {
     state.originalColor = config.getValue();
     setCustomPickerFromColor(target, state.originalColor, { preview: false });
     if (config.panel) {
-        if (target === "richText") {
+        if (target === "richText" || target === "title") {
             moveRichTextColorPanelToBody(config.panel);
         }
-        config.panel.classList.toggle("mobileCustomColorModal", target !== "richText" && isMobileViewport());
-        config.panel.classList.toggle("richTextColorMode", target === "richText");
+        config.panel.classList.toggle("mobileCustomColorModal", target !== "richText" && target !== "title" && isMobileViewport());
+        config.panel.classList.toggle("richTextColorMode", target === "richText" || target === "title");
         config.panel.hidden = false;
     }
     if (textColorResetGlobalBtn) {
-        textColorResetGlobalBtn.hidden = target !== "richText";
+        textColorResetGlobalBtn.hidden = target !== "richText" && target !== "title";
     }
     if (customColorModalBackdrop) {
-        customColorModalBackdrop.hidden = target === "richText" || !isMobileViewport();
+        customColorModalBackdrop.hidden = target === "richText" || target === "title" || !isMobileViewport();
     }
     activeCustomColorTarget = target;
 }
@@ -3835,10 +4597,14 @@ function applyTextColorToElementTree(element) {
 
     const card = element.closest ? element.closest(".card") : null;
     const cardIndex = card ? Number(card.dataset.cardIndex) : -1;
+    const titleColor = element.classList && element.classList.contains("cardTitle") && data[cardIndex]
+        ? normalizeColorValue(data[cardIndex].titleColor)
+        : "";
     const contentColor = element.classList && element.classList.contains("info") && data[cardIndex]
         ? normalizeColorValue(data[cardIndex].contentColor)
         : "";
-    const inheritedColor = contentColor || textColor;
+    const headlineColor = element.id ? resolveHeadlineColor(element.id) : "";
+    const inheritedColor = titleColor || contentColor || headlineColor || textColor;
 
     element.style.color = inheritedColor;
     element.querySelectorAll(".typesetLine, .typesetLineInner, .verticalTextLine, .verticalTextChar").forEach((child) => {
@@ -3860,6 +4626,18 @@ function applyTextColorPreview(value) {
     }
 
     document.querySelectorAll("#year, #subtitle, #side, .cardTitle, .info, .cardImagePlaceholder").forEach(applyTextColorToElementTree);
+    renderHeadlineFontControls();
+    document.querySelectorAll(".block[data-card-editor-index]").forEach((block) => {
+        const index = Number(block.dataset.cardEditorIndex);
+        const button = block.querySelector(".titleColorButton");
+        if (Number.isInteger(index) && data[index]) {
+            updateTitleColorButton(button, resolveCardTitleColor(data[index]));
+            const titleInput = block.querySelector(".cardTitleInput");
+            if (titleInput) {
+                titleInput.style.color = resolveCardTitleColor(data[index]);
+            }
+        }
+    });
 }
 
 function commitTextColorPreview() {
@@ -4142,9 +4920,14 @@ function syncCustomColorModalMode() {
     const config = getCustomPickerConfig(activeCustomColorTarget);
     if (!config || !config.panel || config.panel.hidden) return;
 
-    if (activeCustomColorTarget === "richText") {
+    if (activeCustomColorTarget === "richText" || activeCustomColorTarget === "title") {
         config.panel.classList.remove("mobileCustomColorModal");
-        scheduleRichTextColorPanelPosition(config.panel, richTextColorPickerContext && richTextColorPickerContext.button);
+        scheduleRichTextColorPanelPosition(
+            config.panel,
+            activeCustomColorTarget === "title"
+                ? (titleColorPickerContext && titleColorPickerContext.button)
+                : (richTextColorPickerContext && richTextColorPickerContext.button)
+        );
         if (customColorModalBackdrop) {
             customColorModalBackdrop.hidden = true;
         }
@@ -5861,7 +6644,12 @@ if (sideHeaderReserveInput) {
 
 const loadFontsBtn = document.getElementById("loadFontsBtn");
 if (loadFontsBtn) {
-    loadFontsBtn.onclick = loadSystemFonts;
+    loadFontsBtn.onclick = handleLoadFontsClick;
+}
+
+const fontFileInput = document.getElementById("fontFileInput");
+if (fontFileInput) {
+    fontFileInput.onchange = handleFontFileInputChange;
 }
 
 const phoneResolutionSelect = document.getElementById("phoneResolutionSelect");
@@ -5892,6 +6680,7 @@ function handleViewportChange() {
 
     lastResponsiveViewportWidth = viewportWidth;
     applyResponsiveViewport();
+    scheduleFocusedEditableScroll();
 
     if (isMobileHeightOnlyResize) {
         syncPreviewExportActionsPosition();
@@ -5921,13 +6710,18 @@ if (previewScrollContainer) {
 }
 
 window.addEventListener("resize", handleViewportChange);
+window.addEventListener("focusin", scheduleFocusedEditableScroll);
 window.addEventListener("beforeunload", flushPendingInputAndState);
+document.addEventListener("selectionchange", saveCurrentRichTextSelection);
 
 if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", handleViewportChange);
 }
 
 async function initializeApp() {
+    loadCachedSystemFonts();
+    await loadCachedImportedFonts();
+    updateSystemFontLoaderUi();
     initializeArticleWorkspace();
     const didHydrateStoredImages = await loadCurrentArticleIntoEditor();
 

@@ -60,6 +60,33 @@
             return true;
         }
 
+        function getRichTextEditorIndexFromElement(element) {
+            if (!element || !element.id) return -1;
+
+            const match = /^contentEditor-(\d+)$/.exec(element.id);
+            return match ? Number(match[1]) : -1;
+        }
+
+        function saveCurrentRichTextSelection() {
+            const selection = window.getSelection();
+            if (!selection || selection.rangeCount === 0) return false;
+
+            const range = selection.getRangeAt(0);
+            let node = range.commonAncestorContainer;
+
+            if (node && node.nodeType === Node.TEXT_NODE) {
+                node = node.parentNode;
+            }
+
+            const editorEl = node && node.closest ? node.closest(".richTextEditor") : null;
+            const index = getRichTextEditorIndexFromElement(editorEl);
+
+            if (index < 0 || !isRangeInsideElement(range, editorEl)) return false;
+
+            richTextSelections.set(index, range.cloneRange());
+            return true;
+        }
+
         function restoreRichTextSelection(index) {
             const range = richTextSelections.get(index);
             const selection = window.getSelection();
@@ -852,6 +879,7 @@
             isRangeInsideElement,
             saveRichTextSelection,
             saveCurrentRichTextSelectionIfInside,
+            saveCurrentRichTextSelection,
             restoreRichTextSelection,
             getSavedRichTextRange,
             stripRichTextFontSpans,

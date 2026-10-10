@@ -175,9 +175,14 @@
                         return targetItem;
                     }
 
-                    return typeof sourceItem.titleSize === "number"
-                        ? { ...targetItem, titleSize: sourceItem.titleSize }
-                        : targetItem;
+                    const nextItem = { ...targetItem };
+                    if (typeof sourceItem.titleSize === "number") {
+                        nextItem.titleSize = sourceItem.titleSize;
+                    }
+                    if (typeof sourceItem.titleColor === "string") {
+                        nextItem.titleColor = sourceItem.titleColor;
+                    }
+                    return nextItem;
                 });
             }
 
