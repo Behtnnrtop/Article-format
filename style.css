@@ -2961,6 +2961,14 @@ button:hover{
     -webkit-user-select:text;
 }
 
+.richTextEditor[data-first-line-indent="true"]{
+    text-indent:var(--editor-first-line-indent,2em);
+}
+
+.richTextEditor[data-first-line-indent="true"]:empty{
+    text-indent:0;
+}
+
 .richTextEditor:empty::before{
     content:attr(data-placeholder);
     color:#b8c0cc;
