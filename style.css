@@ -541,6 +541,11 @@ body{
     text-align:inherit;
 }
 
+.info[data-first-line-indent="true"] > p:not(.contentHeading):not(.typesetText),
+.info[data-first-line-indent="true"] > div:not(.contentHeading):not(.typesetText){
+    text-indent:var(--content-first-line-indent,2em);
+}
+
 .info br{
     display:block;
     content:"";
@@ -2959,14 +2964,6 @@ button:hover{
     text-decoration-skip-ink:none;
     user-select:text;
     -webkit-user-select:text;
-}
-
-.richTextEditor[data-first-line-indent="true"]{
-    text-indent:var(--editor-first-line-indent,2em);
-}
-
-.richTextEditor[data-first-line-indent="true"]:empty{
-    text-indent:0;
 }
 
 .richTextEditor:empty::before{
