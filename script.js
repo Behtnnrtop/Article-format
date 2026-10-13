@@ -92,6 +92,7 @@ const SUBTITLE_SETTINGS = Object.freeze({
 
 const phoneResolutions = {
     "720x1600": { width: 720, height: 1600, cssWidth: 360 },
+    "1245x1660": { width: 1245, height: 1660, cssWidth: 415 },
     "1080x1920": { width: 1080, height: 1920, cssWidth: 360 },
     "1080x2376": { width: 1080, height: 2376, cssWidth: 360 },
     "1080x2400": { width: 1080, height: 2400, cssWidth: 360 },
