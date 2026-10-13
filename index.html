@@ -66,7 +66,7 @@
             line-height:1.7;
         }
     </style>
-    <link rel="stylesheet" href="style.css?v=20261010-3">
+    <link rel="stylesheet" href="style.css?v=20261013-6">
 </head>
 <body>
     <div id="unsupportedBrowserNotice" class="unsupportedBrowserNotice" role="alert">
@@ -162,9 +162,12 @@
         <div class="editorHeader">
             <h2>编辑器</h2>
             <div class="editorHeaderActions" data-mobile-panel="text">
-                <button id="bottomWatermarkToggleBtn" type="button" onclick="toggleBottomWatermark()">隐藏底部水印</button>
-                <button id="phonePreviewToggleBtn" type="button" onclick="togglePhonePreview()">显示手机预览</button>
+                <div class="editorHeaderButtonRow">
+                    <button id="bottomWatermarkToggleBtn" type="button" onclick="toggleBottomWatermark()">隐藏底部水印</button>
+                    <button id="phonePreviewToggleBtn" type="button" onclick="togglePhonePreview()">显示手机预览</button>
+                </div>
             </div>
+            <div class="editorFontHint">点击“读取本机字体”后，可以更换更多字体</div>
         </div>
 
         <div class="mobileEditorTabs" role="tablist" aria-label="手机属性分组">

@@ -654,10 +654,11 @@ body.editorCollapsed #dragBar{
 }
 
 .editorHeader{
-    display:flex;
+    display:grid;
+    grid-template-columns:minmax(0,1fr) auto;
     align-items:center;
-    justify-content:space-between;
-    gap:12px;
+    column-gap:12px;
+    row-gap:3px;
     margin-bottom:16px;
     padding-bottom:14px;
     border-bottom:1px solid #eceff3;
@@ -667,6 +668,14 @@ body.editorCollapsed #dragBar{
     margin:0;
     padding:0;
     border-bottom:none;
+}
+
+.editorFontHint{
+    grid-column:1 / -1;
+    color:#6b7280;
+    font-size:12px;
+    line-height:1.5;
+    white-space:nowrap;
 }
 
 .editorTopActions{
@@ -1093,9 +1102,16 @@ body.articleManagerOpen .articleManagerPanel{
 .editorHeaderActions{
     display:flex;
     align-items:center;
+    justify-content:flex-end;
+    min-width:0;
+}
+
+.editorHeaderButtonRow{
+    display:flex;
+    align-items:center;
+    justify-content:flex-end;
     gap:8px;
     flex-wrap:wrap;
-    justify-content:flex-end;
 }
 
 .mobileEditorTabs{
@@ -3309,6 +3325,10 @@ button:hover{
         display:none;
     }
 
+    .editorFontHint{
+        display:none;
+    }
+
     .articleManager{
         order:3;
         display:grid;
@@ -3356,6 +3376,11 @@ button:hover{
 
     .editorHeaderActions{
         margin:0 0 14px;
+        align-items:flex-start;
+        justify-content:flex-start;
+    }
+
+    .editorHeaderButtonRow{
         justify-content:flex-start;
     }
 
