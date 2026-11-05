@@ -28,6 +28,8 @@
         html.unsupported-browser #customColorModalBackdrop,
         html.unsupported-browser #copyStyleModal,
         html.unsupported-browser #changelogModal,
+        html.unsupported-browser #androidAppModal,
+        html.unsupported-browser #mobileExportPreview,
         html.unsupported-browser #articleManagerBackdrop,
         html.unsupported-browser #preview,
         html.unsupported-browser #phoneRenderHost,
@@ -66,7 +68,7 @@
             line-height:1.7;
         }
     </style>
-    <link rel="stylesheet" href="style.css?v=20261013-6">
+    <link rel="stylesheet" href="style.css?v=20261105-5">
 </head>
 <body>
     <div id="unsupportedBrowserNotice" class="unsupportedBrowserNotice" role="alert">
@@ -108,6 +110,78 @@
             </div>
         </div>
     </div>
+    <div id="androidAppModal" class="changelogModal" hidden role="dialog" aria-modal="true" aria-labelledby="androidAppModalTitle" aria-describedby="androidAppModalSubtitle">
+        <div class="changelogDialog">
+            <div class="changelogHeader">
+                <div>
+                    <h3 id="androidAppModalTitle">下载安卓APP</h3>
+                    <p id="androidAppModalSubtitle">获取安卓客户端，或加入交流群了解使用方法与后续更新</p>
+                </div>
+                <button type="button" class="changelogCloseBtn" aria-label="关闭" onclick="closeAndroidAppModal()">×</button>
+            </div>
+            <div class="changelogContent androidAppContent">
+                <div class="androidAppOptions">
+                    <section class="androidAppOption" aria-labelledby="androidAppDownloadTitle">
+                        <div class="androidAppOptionText">
+                            <h3 id="androidAppDownloadTitle">安卓 APP</h3>
+                            <p>前往下载页面，获取当前可用版本。</p>
+                        </div>
+                        <a class="androidAppDownloadLink" href="https://www.pgyer.com/article-summary" target="_blank" rel="noopener noreferrer">
+                            前往下载
+                        </a>
+                    </section>
+                    <section class="androidAppOption" aria-labelledby="androidAppCommunityTitle">
+                        <div class="androidAppOptionText">
+                            <h4 id="androidAppCommunityTitle">QQ 交流群</h4>
+                            <p>交流使用体验、反馈问题，并获取更新消息。</p>
+                        </div>
+                        <div class="androidAppGroupNumber" aria-label="QQ群号 1128091306">
+                            <span>群号</span>
+                            <strong>1128091306</strong>
+                        </div>
+                    </section>
+                    <section class="androidAppOption" aria-labelledby="androidAppXiaohongshuTitle">
+                        <div class="androidAppOptionText">
+                            <h4 id="androidAppXiaohongshuTitle">小红书</h4>
+                            <p>关注更新，加入主页群聊，获取最新消息。</p>
+                        </div>
+                        <div class="androidAppGroupNumber" aria-label="小红书号 behtnnrtop">
+                            <span>账号</span>
+                            <strong>Behtnnrtop</strong>
+                        </div>
+                    </section>
+                </div>
+            </div>
+            <div class="changelogActions">
+                <button type="button" onclick="closeAndroidAppModal()">知道了</button>
+            </div>
+        </div>
+    </div>
+    <div id="mobileExportPreview" class="mobileExportPreview" hidden role="dialog" aria-modal="true" aria-labelledby="mobileExportPreviewTitle">
+        <header class="mobileExportPreviewHeader">
+            <button id="mobileExportPreviewCloseBtn" class="mobileExportPreviewClose" type="button" aria-label="关闭导出预览" onclick="ArticleExportPreview.closeMobileExportPreview()">×</button>
+            <div class="mobileExportPreviewHeading">
+                <h2 id="mobileExportPreviewTitle">导出预览</h2>
+                <p id="mobileExportPreviewMeta">1 张图片</p>
+            </div>
+            <div class="mobileExportPreviewZoom" aria-label="导出预览缩放">
+                <button id="mobileExportPreviewScaleDecreaseBtn" type="button" title="缩小预览" aria-label="缩小预览" onclick="ArticleExportPreview.changeMobileExportPreviewScale(-0.1)">−</button>
+                <span id="mobileExportPreviewScaleValue" aria-live="polite">100%</span>
+                <button id="mobileExportPreviewScaleIncreaseBtn" type="button" title="放大预览" aria-label="放大预览" onclick="ArticleExportPreview.changeMobileExportPreviewScale(0.1)">+</button>
+            </div>
+            <div class="mobileExportPreviewPager" id="mobileExportPreviewPager" hidden aria-label="切图切换">
+                <button id="mobileExportPreviewPrevBtn" type="button" onclick="ArticleExportPreview.changeMobileExportPreviewImage(-1)">上一张</button>
+                <span id="mobileExportPreviewPageValue">1/1</span>
+                <button id="mobileExportPreviewNextBtn" type="button" onclick="ArticleExportPreview.changeMobileExportPreviewImage(1)">下一张</button>
+            </div>
+        </header>
+        <main id="mobileExportPreviewStage" class="mobileExportPreviewStage">
+            <img id="mobileExportPreviewImage" class="mobileExportPreviewImage" alt="导出图片预览">
+        </main>
+        <footer class="mobileExportPreviewFooter">
+            <button id="mobileExportPreviewDownloadBtn" class="mobileExportPreviewDownload" type="button" onclick="ArticleExportPreview.downloadMobileExportPreview()">下载</button>
+        </footer>
+    </div>
     <div id="articleManagerBackdrop" class="articleManagerBackdrop" hidden></div>
     <div id="preview">
         <div id="mobilePreviewToolbar" class="mobilePreviewToolbar" aria-label="手机预览工具栏">
@@ -127,6 +201,7 @@
             <div id="cards" class="posterCards" data-poster-part="cards"></div>
             <div id="copyright" class="posterCopyright" data-poster-part="copyright">制图：@Behtnnrtop</div>
         </div>
+        <div id="mobilePhonePreviewStage" class="mobilePhonePreviewStage" aria-hidden="true"></div>
     </div>
 
     <div id="phoneRenderHost" class="phoneRenderHost" aria-hidden="true"></div>
@@ -147,6 +222,7 @@
         <div class="editorTopActions" data-mobile-panel="article">
             <button id="donateBtn" type="button" aria-label="支持网站" title="支持网站" onclick="if(window.handleSupportSiteClick){window.handleSupportSiteClick();}else{window.open('https://share.mubu.com/doc/5UcQ7YVxdct','_blank','noopener,noreferrer');}">支持网站</button>
             <button id="changelogBtn" type="button" onclick="openChangelogModal()">更新日志</button>
+            <button id="androidAppBtn" type="button" onclick="openAndroidAppModal()">下载安卓APP</button>
             <button id="articleManagerBtn" type="button" onclick="openArticleManagerModal()">文章管理</button>
         </div>
 
@@ -155,8 +231,15 @@
             <select id="articleSelect" onchange="switchArticle(this.value)"></select>
             <button type="button" onclick="createArticle()">新建</button>
             <button type="button" onclick="renameArticle()">重命名</button>
+            <button type="button" onclick="duplicateArticle()">复制文章</button>
             <button type="button" onclick="openCopyStyleModal()">复制样式到</button>
             <button id="deleteArticleBtn" class="danger" type="button" onclick="deleteArticle()">删除</button>
+        </div>
+
+        <div class="articlePanelActions" data-mobile-panel="article" aria-label="文章相关入口">
+            <button class="articlePanelAction articlePanelSupportAction" type="button" onclick="if(window.handleSupportSiteClick){window.handleSupportSiteClick();}else{window.open('https://share.mubu.com/doc/5UcQ7YVxdct','_blank','noopener,noreferrer');}">支持网站</button>
+            <button class="articlePanelAction" type="button" onclick="openChangelogModal()">更新日志</button>
+            <button class="articlePanelAction" type="button" onclick="openAndroidAppModal()">下载安卓APP</button>
         </div>
 
         <div class="editorHeader">
@@ -188,10 +271,11 @@
                 <option value="1080x2400">1080 × 2400</option>
                 <option value="1170x2532">1170 × 2532</option>
                 <option value="1220x2712">1220 × 2712</option>
+                <option value="1440x2400">1440 × 2400</option>
                 <option value="1290x2796">1290 × 2796</option>
                 <option value="1440x3200">1440 × 3200</option>
             </select>
-            <div class="resolutionHint">手机预览和长图导出会按当前分辨率实时渲染</div>
+            <div class="resolutionHint">字号与间距沿用编辑显示，所选分辨率宽度只影响换行和导出像素尺寸</div>
         </div>
 
         <button id="exportBtn" class="mobileExportBtn" data-mobile-panel="export" onclick="exportImage()">导出长图</button>
@@ -436,13 +520,15 @@
             var scripts = [
                 "vendor/html2canvas-1.4.1.min.js?v=1.4.1",
                 "vendor/jszip-3.10.1.min.js?v=3.10.1",
-                "paragraphs.js?v=20261010-1",
+                "paragraphs.js?v=20261103-2",
                 "image-store.js?v=20260826-1",
-                "layout.js?v=20261009-1",
-                "export.js?v=20260920-1",
+                "background-renderer.js?v=20261015-1",
+                "export-preview.js?v=20261105-1",
+                "layout.js?v=20261105-3",
+                "export.js?v=20261103-2",
                 "article-workspace.js?v=20261009-1",
-                "rich-text-editor.js?v=20261008-1",
-                "script.js?v=20261013-3",
+                "rich-text-editor.js?v=20261019-2",
+                "script.js?v=20261105-2",
                 "analytics.js?v=20260915-1"
             ];
 

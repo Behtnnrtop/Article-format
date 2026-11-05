@@ -34,6 +34,30 @@ let recentBackgroundColors = [];
 let recentTextColors = [];
 const GLOBAL_DEFAULT_FONT_FAMILY = '"Microsoft YaHei",sans-serif';
 const SONGTI_FONT_FAMILY = 'SimSun,"Songti SC","STSong",serif';
+const DEFAULT_POSTER_LANGUAGE = "zh-CN";
+const TRADITIONAL_CHINESE_POSTER_LANGUAGES = Object.freeze({
+    tw: "zh-TW",
+    hk: "zh-HK",
+    mo: "zh-MO"
+});
+
+function getPosterLanguage(languages = null) {
+    const preferredLanguages = Array.isArray(languages)
+        ? languages
+        : (Array.isArray(navigator.languages) && navigator.languages.length
+            ? navigator.languages
+            : [navigator.language || DEFAULT_POSTER_LANGUAGE]);
+    const chineseLanguage = preferredLanguages.find((language) => /^zh(?:-|$)/i.test(String(language || "")));
+    if (!chineseLanguage) return DEFAULT_POSTER_LANGUAGE;
+
+    const normalizedLanguage = String(chineseLanguage).toLowerCase();
+    const traditionalRegionMatch = normalizedLanguage.match(/^zh-(?:hant-)?(tw|hk|mo)(?:-|$)/);
+    if (traditionalRegionMatch) {
+        return TRADITIONAL_CHINESE_POSTER_LANGUAGES[traditionalRegionMatch[1]];
+    }
+    if (/^zh-hant(?:-|$)/.test(normalizedLanguage)) return "zh-Hant";
+    return DEFAULT_POSTER_LANGUAGE;
+}
 
 let fontFamily = GLOBAL_DEFAULT_FONT_FAMILY;
 const CARD_TITLE_DEFAULT_FONT_FAMILY = '"Songti SC","STSong","SimSun",serif';
@@ -98,6 +122,7 @@ const phoneResolutions = {
     "1080x2400": { width: 1080, height: 2400, cssWidth: 360 },
     "1170x2532": { width: 1170, height: 2532, cssWidth: 390 },
     "1220x2712": { width: 1220, height: 2712, cssWidth: 407 },
+    "1440x2400": { width: 1440, height: 2400, cssWidth: 480 },
     "1290x2796": { width: 1290, height: 2796, cssWidth: 430 },
     "1440x3200": { width: 1440, height: 3200, cssWidth: 480 }
 };
@@ -270,7 +295,32 @@ function getPreviewFontScale() {
     return Math.min(Math.max(resolutionScale, MIN_PREVIEW_FONT_SCALE), MAX_PREVIEW_FONT_SCALE);
 }
 
+function getMobileExportWidthReference() {
+    if (!isMobileViewport()) return null;
+
+    const userAgent = navigator.userAgent || "";
+    if (!/Android|iPhone|iPad|iPod|Mobile/i.test(userAgent)) return null;
+
+    const viewportSize = getViewportSize();
+    const viewportWidth = Math.max(1, Math.round(stableMobileViewportWidth || viewportSize.width || 0));
+    const viewportHeight = Math.max(1, Math.round(viewportSize.height || viewportSize.visualHeight || 0));
+    if (viewportWidth > viewportHeight) return null;
+
+    return {
+        cssWidth: viewportWidth,
+        basePixelWidth: BASE_RESOLUTION_WIDTH
+    };
+}
+
 function getPhoneExportCssWidth(resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"]) {
+    const mobileReference = getMobileExportWidthReference();
+    const resolutionWidth = Number(resolution && resolution.width);
+    if (mobileReference && Number.isFinite(resolutionWidth) && resolutionWidth > 0) {
+        return Math.max(1, Math.round(
+            resolutionWidth * mobileReference.cssWidth / mobileReference.basePixelWidth
+        ));
+    }
+
     const cssWidth = Number(resolution && resolution.cssWidth);
     return Math.max(1, Math.round(Number.isFinite(cssWidth) ? cssWidth : 360));
 }
@@ -290,7 +340,7 @@ function getLongImageExportScale(
         * (posterHeight + topPadding)
         * preferredScale
         * preferredScale;
-    const pixelLimit = isLikelyMobileBrowser()
+    const pixelLimit = window.ArticleExportPreview.isLikelyMobileBrowser()
         ? MOBILE_LONG_IMAGE_SCALE_PIXEL_LIMIT
         : DESKTOP_LONG_IMAGE_SCALE_PIXEL_LIMIT;
     if (outputPixels <= pixelLimit) return preferredScale;
@@ -382,6 +432,7 @@ const copyStyleSourceLabel = document.getElementById("copyStyleSourceLabel");
 const copyStyleArticleList = document.getElementById("copyStyleArticleList");
 const changelogModal = document.getElementById("changelogModal");
 const changelogContent = document.getElementById("changelogContent");
+const androidAppModal = document.getElementById("androidAppModal");
 const sideSpacingInput = document.getElementById("sideSpacingInput");
 const paragraphTitleSpacingInput = document.getElementById("paragraphTitleSpacingInput");
 const moduleSpacingInput = document.getElementById("moduleSpacingInput");
@@ -630,6 +681,18 @@ function closeChangelogModal() {
     if (!changelogModal) return;
 
     changelogModal.hidden = true;
+}
+
+function openAndroidAppModal() {
+    if (!androidAppModal) return;
+
+    androidAppModal.hidden = false;
+}
+
+function closeAndroidAppModal() {
+    if (!androidAppModal) return;
+
+    androidAppModal.hidden = true;
 }
 
 function getStoredChangelogSeenDate() {
@@ -945,14 +1008,11 @@ let pendingPhonePreviewSync = false;
 let phoneRenderPoster = null;
 let phoneRenderLayoutSignature = "";
 let phoneRenderLayoutPromise = null;
+let mobilePhonePreviewStageFrame = null;
+let mobilePhonePreviewSyncVersion = 0;
 let isInitializing = true;
 let editorRenderFrame = null;
 let wordCountRenderFrame = null;
-let backgroundImageCanvasCache = {
-    src: "",
-    promise: null,
-    image: null
-};
 const collapsedCardEditorIndexes = new Set();
 const TEXT_ALIGN_VALUES = Object.freeze(["left", "center", "right"]);
 const TEXT_ALIGN_LABELS = Object.freeze({
@@ -1038,6 +1098,16 @@ function normalizeBackgroundImageOpacity(value) {
 function getBackgroundImageOpacityPercent() {
     return Math.round(normalizeBackgroundImageOpacity(backgroundImageOpacity) * 100);
 }
+
+const backgroundRenderer = window.ArticleBackgroundRenderer.createBackgroundRenderer({
+    getBackgroundState: () => ({
+        fallbackColor: backgroundColor,
+        imageSource: backgroundImageDataUrl,
+        imageOpacity: backgroundImageOpacity
+    }),
+    normalizeOpacity: normalizeBackgroundImageOpacity
+});
+window.articleBackgroundRenderer = backgroundRenderer;
 
 const imageStore = window.ArticleImageStore || null;
 const articleWorkspace = window.ArticleWorkspace.createArticleWorkspace({
@@ -1435,7 +1505,6 @@ function sanitizeRichTextSpanStyle(sourceStyle, targetStyle) {
     const colorValue = sanitizeRichTextColorValue(sourceStyle.color);
     const textDecorationLineValue = sanitizeRichTextDecorationLineValue(sourceStyle.textDecorationLine);
     const textDecorationStyleValue = sanitizeRichTextDecorationStyleValue(sourceStyle.textDecorationStyle);
-    const textDecorationColorValue = sanitizeRichTextColorValue(sourceStyle.textDecorationColor);
 
     if (fontFamilyValue) targetStyle.fontFamily = fontFamilyValue;
     if (fontSizeValue) targetStyle.fontSize = fontSizeValue;
@@ -1444,7 +1513,6 @@ function sanitizeRichTextSpanStyle(sourceStyle, targetStyle) {
     if (colorValue) targetStyle.color = colorValue;
     if (textDecorationLineValue) targetStyle.textDecorationLine = textDecorationLineValue;
     if (textDecorationStyleValue) targetStyle.textDecorationStyle = textDecorationStyleValue;
-    if (textDecorationColorValue) targetStyle.textDecorationColor = textDecorationColorValue;
 }
 
 function sanitizeRichText(value) {
@@ -1488,8 +1556,7 @@ function sanitizeRichText(value) {
                     fontStyle: child.style.fontStyle,
                     color: child.style.color,
                     textDecorationLine: child.style.textDecorationLine,
-                    textDecorationStyle: child.style.textDecorationStyle,
-                    textDecorationColor: child.style.textDecorationColor
+                    textDecorationStyle: child.style.textDecorationStyle
                 };
                 Array.from(child.attributes).forEach((attribute) => {
                     child.removeAttribute(attribute.name);
@@ -1603,65 +1670,6 @@ function renderPreviewBlock(element) {
     return `<div${className}>${element.innerHTML || "<br>"}</div>`;
 }
 
-function ensurePosterBackgroundCanvas(poster) {
-    if (!poster) return null;
-
-    let canvas = poster.querySelector(".posterBackgroundCanvas");
-    if (!canvas) {
-        canvas = document.createElement("canvas");
-        canvas.className = "posterBackgroundCanvas";
-        canvas.setAttribute("aria-hidden", "true");
-        poster.prepend(canvas);
-    }
-
-    return canvas;
-}
-
-async function syncPosterBackgroundCanvas(poster) {
-    const canvas = ensurePosterBackgroundCanvas(poster);
-    if (!canvas) return;
-
-    if (!backgroundImageDataUrl) {
-        canvas.hidden = true;
-        canvas.style.height = "";
-        return;
-    }
-
-    const width = Math.max(1, Math.round(poster.offsetWidth || poster.getBoundingClientRect().width || 0));
-    const posterRect = poster.getBoundingClientRect();
-    const minBottom = posterRect.top + (poster.clientHeight || posterRect.height || 0);
-    const naturalBottom = Array.from(poster.children)
-        .filter((child) => child !== canvas && !child.hidden)
-        .reduce((bottom, child) => {
-            const rect = child.getBoundingClientRect();
-            return Math.max(bottom, rect.bottom);
-        }, minBottom);
-    const height = Math.max(1, Math.round(naturalBottom - posterRect.top));
-
-    canvas.hidden = false;
-    canvas.width = width;
-    canvas.height = height;
-    canvas.style.height = `${height}px`;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    await drawFullSliceBackground(ctx, width, height);
-}
-
-function schedulePosterBackgroundSync(poster = document.getElementById("poster")) {
-    if (!poster) return;
-
-    if (posterBackgroundSyncFrame !== null) {
-        cancelAnimationFrame(posterBackgroundSyncFrame);
-    }
-
-    posterBackgroundSyncFrame = requestAnimationFrame(() => {
-        posterBackgroundSyncFrame = null;
-        syncPosterBackgroundCanvas(poster);
-    });
-}
-
 function syncPreviewExportActionsPosition() {
     const preview = document.getElementById("preview");
     if (!preview) return;
@@ -1669,42 +1677,6 @@ function syncPreviewExportActionsPosition() {
     const previewRect = preview.getBoundingClientRect();
     const rightInset = Math.max(18, Math.round(window.innerWidth - previewRect.right + 18));
     document.documentElement.style.setProperty("--preview-actions-right", `${rightInset}px`);
-}
-
-function ensurePhoneBackgroundCanvas(screen) {
-    if (!screen) return null;
-
-    let canvas = screen.querySelector(".phoneBackgroundCanvas");
-    if (!canvas) {
-        canvas = document.createElement("canvas");
-        canvas.className = "phoneBackgroundCanvas";
-        canvas.setAttribute("aria-hidden", "true");
-        screen.prepend(canvas);
-    }
-
-    return canvas;
-}
-
-async function syncPhoneBackgroundCanvas(screen, resolution = null) {
-    const canvas = ensurePhoneBackgroundCanvas(screen);
-    if (!canvas) return;
-
-    if (!backgroundImageDataUrl) {
-        canvas.hidden = true;
-        return;
-    }
-
-    const width = Math.max(1, Math.round((resolution && resolution.width) || screen.clientWidth || screen.getBoundingClientRect().width || 0));
-    const height = Math.max(1, Math.round((resolution && resolution.height) || screen.clientHeight || screen.getBoundingClientRect().height || 0));
-
-    canvas.hidden = false;
-    canvas.width = width;
-    canvas.height = height;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    await drawFullSliceBackground(ctx, width, height);
 }
 
 function getItemLineSpacing(item) {
@@ -2961,7 +2933,7 @@ function renderPosterCards(poster, previewFontScale = getPreviewFontScale()) {
 
 function handleCardImageLoaded() {
     syncCardsOffset();
-    schedulePosterBackgroundSync(document.getElementById("poster"));
+    backgroundRenderer.schedulePosterBackgroundSync(document.getElementById("poster"));
     schedulePhonePreviewSync();
     saveState();
 }
@@ -3008,7 +2980,7 @@ function renderPreviewCardByIndex(index, { deferTypesetting = false, shouldSave 
     }
 
     syncCardsOffset();
-    schedulePosterBackgroundSync(document.getElementById("poster"));
+    backgroundRenderer.schedulePosterBackgroundSync(document.getElementById("poster"));
     if (shouldSave) {
         saveState();
     }
@@ -3094,6 +3066,7 @@ function renderAuxiliaryControls() {
 function applyPosterContainerState(poster) {
     if (!poster) return;
 
+    poster.setAttribute("lang", getPosterLanguage());
     poster.style.backgroundColor = backgroundColor;
     poster.style.backgroundImage = "";
     poster.style.backgroundSize = "";
@@ -3101,6 +3074,7 @@ function applyPosterContainerState(poster) {
     poster.style.backgroundRepeat = "";
     poster.style.fontFamily = fontFamily;
     poster.style.setProperty("--text-color", textColor);
+    poster.style.setProperty("--poster-top-padding", `${topPadding}px`);
     poster.style.setProperty("--text-side-spacing", `${sideSpacing}px`);
     poster.style.setProperty("--side-header-reserve", `${sideHeaderReserve}px`);
     poster.style.setProperty("--card-title-spacing", `${paragraphTitleSpacing}px`);
@@ -3163,7 +3137,7 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
 
     const poster = document.getElementById("poster");
     if (poster) {
-        ensurePosterBackgroundCanvas(poster);
+        backgroundRenderer.ensurePosterBackgroundCanvas(poster);
         applyPosterContainerState(poster);
     }
 
@@ -3244,10 +3218,10 @@ async function renderPreview({ updateControls = false, shouldSave = true, deferT
     }
 
     if (hideOverlayWhenReady) {
-        await syncPosterBackgroundCanvas(poster);
+        await backgroundRenderer.syncPosterBackgroundCanvas(poster);
         hideTypesettingOverlay();
     } else {
-        schedulePosterBackgroundSync(poster);
+        backgroundRenderer.schedulePosterBackgroundSync(poster);
     }
 
     if (!deferTypesetting && !hideOverlayWhenReady) {
@@ -3689,17 +3663,16 @@ async function syncPhonePreview() {
         watermark.hidden = !showBottomWatermark;
 
         requestAnimationFrame(() => {
-            syncPhoneBackgroundCanvas(screen, resolution);
+            backgroundRenderer.syncPhoneBackgroundCanvas(screen, resolution);
             const scale = screen.clientWidth / imageWidth;
-            const scaledTopPadding = topPaddingHeight * scale;
             const scaledWatermarkHeight = watermarkBandHeight * scale;
             const scaledFontSize = parseFloat(window.getComputedStyle(getPosterPart(phonePoster, "copyright") || document.body).fontSize || "13") * scale;
-            topPaddingLayer.style.height = `${scaledTopPadding}px`;
-            topPaddingLayer.style.backgroundColor = backgroundImageDataUrl ? "transparent" : watermarkSettings.background;
-            canvasWrap.style.top = `${scaledTopPadding}px`;
+            topPaddingLayer.style.height = "0";
+            topPaddingLayer.style.backgroundColor = "transparent";
+            canvasWrap.style.top = "0";
             canvasWrap.style.bottom = `${scaledWatermarkHeight}px`;
             canvasWrap.style.height = "";
-            const availableContentHeight = Math.max(screen.clientHeight - scaledTopPadding - scaledWatermarkHeight, 0);
+            const availableContentHeight = Math.max(screen.clientHeight - scaledWatermarkHeight, 0);
             const contentHeight = Math.max(clone.scrollHeight * scale, availableContentHeight);
             canvas.style.transform = `scale(${scale})`;
             canvas.style.height = `${contentHeight}px`;
@@ -3892,7 +3865,7 @@ function finishRichTextEditorChange(index) {
         return;
     }
 
-    renderPreview();
+    scheduleCardPreviewRender(index);
 }
 
 function formatCardText(index, command) {
@@ -4297,7 +4270,7 @@ function applyBackgroundColorPreview(value) {
 
 function commitBackgroundColorPreview() {
     renderBackgroundPalette();
-    schedulePosterBackgroundSync(document.getElementById("poster"));
+    backgroundRenderer.schedulePosterBackgroundSync(document.getElementById("poster"));
     schedulePhonePreviewSync();
     saveState();
 }
@@ -4528,7 +4501,7 @@ function changeBackgroundImage(file) {
 function changeBackgroundImageOpacity(value) {
     backgroundImageOpacity = normalizeBackgroundImageOpacity(Number(value) / 100);
     renderBackgroundImageControls();
-    schedulePosterBackgroundSync(document.getElementById("poster"));
+    backgroundRenderer.schedulePosterBackgroundSync(document.getElementById("poster"));
     schedulePhonePreviewSync();
     saveState();
 }
@@ -4830,6 +4803,7 @@ function changePhoneResolution(value) {
     phoneResolution = value;
     updateTimelineButtons();
     schedulePhonePreviewSync();
+    scheduleMobilePhonePreviewStageSync();
     saveState();
 }
 
@@ -5808,8 +5782,90 @@ function applyMobilePreviewModeState() {
         mobilePosterPreviewMode = false;
     }
 
-    document.body.classList.toggle("mobilePosterPreviewMode", mobilePosterPreviewMode && isMobileViewport());
+    const previewActive = mobilePosterPreviewMode && isMobileViewport();
+    document.body.classList.toggle("mobilePosterPreviewMode", previewActive);
+    if (previewActive) {
+        scheduleMobilePhonePreviewStageSync();
+    } else {
+        resetMobilePhonePreviewStage();
+    }
     updateMobileTypesetRefreshButton();
+}
+
+function resetMobilePhonePreviewStage() {
+    mobilePhonePreviewSyncVersion += 1;
+    if (mobilePhonePreviewStageFrame !== null) {
+        cancelAnimationFrame(mobilePhonePreviewStageFrame);
+        mobilePhonePreviewStageFrame = null;
+    }
+
+    const stage = document.getElementById("mobilePhonePreviewStage");
+    const host = document.getElementById("phoneRenderHost");
+    if (stage) {
+        stage.style.removeProperty("height");
+        stage.setAttribute("aria-hidden", "true");
+    }
+    if (host) {
+        host.style.removeProperty("--mobile-phone-preview-scale");
+        host.style.removeProperty("--mobile-phone-preview-left");
+        host.style.removeProperty("--mobile-phone-preview-design-width");
+        if (host.parentElement === stage) {
+            document.body.appendChild(host);
+        }
+    }
+}
+
+async function syncMobilePhonePreviewStage() {
+    if (mobilePhonePreviewStageFrame !== null) {
+        cancelAnimationFrame(mobilePhonePreviewStageFrame);
+        mobilePhonePreviewStageFrame = null;
+    }
+
+    if (!mobilePosterPreviewMode || !isMobileViewport()) {
+        resetMobilePhonePreviewStage();
+        return null;
+    }
+
+    const stage = document.getElementById("mobilePhonePreviewStage");
+    const host = document.getElementById("phoneRenderHost");
+    const preview = document.getElementById("preview");
+    if (!stage || !host || !preview) return null;
+
+    const syncVersion = ++mobilePhonePreviewSyncVersion;
+    stage.setAttribute("aria-hidden", "false");
+    if (host.parentElement !== stage) {
+        stage.appendChild(host);
+    }
+
+    const poster = await ensurePhoneRenderLayout();
+    if (syncVersion !== mobilePhonePreviewSyncVersion || !mobilePosterPreviewMode || !isMobileViewport()) {
+        return null;
+    }
+
+    const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
+    const designWidth = getPhoneExportCssWidth(resolution);
+    const availableWidth = Math.max(1, stage.clientWidth || preview.clientWidth || window.innerWidth || designWidth);
+    const scale = 1;
+    const scaledHeight = Math.max(1, Math.ceil(Math.max(poster.scrollHeight, poster.offsetHeight, 1)));
+    const left = Math.max(0, (availableWidth - designWidth) / 2);
+
+    host.style.setProperty("--mobile-phone-preview-scale", String(scale));
+    host.style.setProperty("--mobile-phone-preview-left", `${left}px`);
+    host.style.setProperty("--mobile-phone-preview-design-width", `${designWidth}px`);
+    stage.style.height = `${scaledHeight}px`;
+    return poster;
+}
+
+function scheduleMobilePhonePreviewStageSync() {
+    if (!mobilePosterPreviewMode || !isMobileViewport()) return;
+    if (mobilePhonePreviewStageFrame !== null) return;
+
+    mobilePhonePreviewStageFrame = requestAnimationFrame(() => {
+        mobilePhonePreviewStageFrame = null;
+        syncMobilePhonePreviewStage().catch((error) => {
+            console.error("Mobile phone preview sync failed", error);
+        });
+    });
 }
 
 function getPreviewScrollRatio() {
@@ -6447,7 +6503,6 @@ async function toggleMobilePreviewMode() {
     if (!isMobileViewport()) return;
 
     const scrollRatio = getPreviewScrollRatio();
-    const scrollAnchor = captureMobilePreviewScrollAnchor();
 
     if (mobilePosterPreviewMode) {
         mobilePosterPreviewMode = false;
@@ -6458,7 +6513,7 @@ async function toggleMobilePreviewMode() {
             shouldSave: false,
             markMobileTypesettingDirtyOnDefer: false
         });
-        restorePreviewScrollAnchor(scrollAnchor, scrollRatio);
+        restorePreviewScrollRatio(scrollRatio);
         return;
     }
 
@@ -6474,7 +6529,8 @@ async function toggleMobilePreviewMode() {
 
     mobilePosterPreviewMode = true;
     applyMobilePreviewModeState();
-    restorePreviewScrollAnchor(scrollAnchor, scrollRatio);
+    await syncMobilePhonePreviewStage();
+    restorePreviewScrollRatio(scrollRatio);
 }
 
 function toggleEditorCollapsed(event = null) {
@@ -6595,9 +6651,20 @@ if (changelogModal) {
     });
 }
 
+if (androidAppModal) {
+    androidAppModal.addEventListener("click", (event) => {
+        if (event.target === androidAppModal) {
+            closeAndroidAppModal();
+        }
+    });
+}
+
 document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && changelogModal && !changelogModal.hidden) {
         closeChangelogModal();
+    }
+    if (event.key === "Escape" && androidAppModal && !androidAppModal.hidden) {
+        closeAndroidAppModal();
     }
 });
 

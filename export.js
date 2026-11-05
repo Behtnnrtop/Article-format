@@ -71,6 +71,7 @@ async function capturePosterCanvas({ poster = document.getElementById("poster"),
             onclone: (clonedDoc) => {
                 const clonedPoster = clonedDoc.querySelector('[data-capture-target="poster"]');
                 if (clonedPoster) {
+                    clonedPoster.setAttribute("lang", exportState.poster.getAttribute("lang") || getPosterLanguage());
                     const clonedPhoneRenderHost = clonedPoster.closest(".phoneRenderHost");
                     if (clonedPhoneRenderHost) {
                         clonedPhoneRenderHost.style.position = "absolute";
@@ -186,13 +187,10 @@ async function exportDesktopLayoutImage() {
             hideCopyright: !showBottomWatermark,
             transparentPosterBackground: Boolean(backgroundImageDataUrl)
         });
-        const posterElement = document.getElementById("poster");
-        const scale = sourceCanvas.width / ((posterElement && posterElement.offsetWidth) || sourceCanvas.width);
         const posterStyle = window.getComputedStyle(document.getElementById("poster"));
-        const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
-        const canvas = await addCanvasTopPadding(sourceCanvas, topPaddingHeight, posterStyle.backgroundColor || backgroundColor);
+        const canvas = await composeLongImageCanvas(sourceCanvas, posterStyle.backgroundColor || backgroundColor);
         const blob = await canvasToBlob(canvas, "image/jpeg", 1);
-        downloadBlob(blob, "年度总结.jpg");
+        window.ArticleExportPreview.downloadBlob(blob, "年度总结.jpg");
     } catch (error) {
         console.error("Long image export failed", error);
         window.alert((error && error.message) || "导出失败，请稍后再试。");
@@ -203,7 +201,8 @@ async function exportDesktopLayoutImage() {
 
 async function exportImage() {
     const restoreOverlay = showExportOverlay("正在导出...");
-    const shouldPreview = shouldOpenDesktopExportPreview("previewExportBtn");
+    const shouldMobilePreview = window.ArticleExportPreview.isLikelyMobileBrowser();
+    const shouldDesktopPreview = window.ArticleExportPreview.shouldOpenDesktopExportPreview("previewExportBtn");
 
     try {
         await waitForNextPaint();
@@ -224,10 +223,8 @@ async function exportImage() {
             hideCopyright: !showBottomWatermark,
             transparentPosterBackground: Boolean(backgroundImageDataUrl)
         });
-        const scale = sourceCanvas.width / getPhoneExportCssWidth(resolution);
         const posterStyle = window.getComputedStyle(phonePoster);
-        const topPaddingHeight = getExportTopPaddingHeight(resolution, scale);
-        const canvas = await addCanvasTopPadding(sourceCanvas, topPaddingHeight, posterStyle.backgroundColor || backgroundColor);
+        const canvas = await composeLongImageCanvas(sourceCanvas, posterStyle.backgroundColor || backgroundColor);
         console.info("Long image export output", {
             sourceCanvasWidth: sourceCanvas.width,
             sourceCanvasHeight: sourceCanvas.height,
@@ -239,9 +236,18 @@ async function exportImage() {
             exportScale
         });
         const blob = await canvasToBlob(canvas, "image/jpeg", 1);
-        if (shouldPreview) {
-            const previewWindow = openDesktopExportPreviewWindow("长图导出预览");
-            showDesktopExportPreview(previewWindow, {
+        if (shouldMobilePreview) {
+            window.ArticleExportPreview.showMobileExportPreview({
+                title: "长图导出预览",
+                fileBlob: blob,
+                downloadFilename: "年度总结.jpg",
+                downloadLabel: "下载 JPG",
+                cssWidth: getPhoneExportCssWidth(resolution),
+                images: [{ blob }]
+            });
+        } else if (shouldDesktopPreview) {
+            const previewWindow = window.ArticleExportPreview.openDesktopExportPreviewWindow("长图导出预览");
+            window.ArticleExportPreview.showDesktopExportPreview(previewWindow, {
                 title: "长图导出预览",
                 fileBlob: blob,
                 downloadFilename: "年度总结.jpg",
@@ -249,7 +255,7 @@ async function exportImage() {
                 images: [{ blob }]
             });
         } else {
-            downloadBlob(blob, "年度总结.jpg");
+            window.ArticleExportPreview.downloadBlob(blob, "年度总结.jpg");
         }
     } catch (error) {
         console.error("Long image export failed", error);
@@ -302,18 +308,18 @@ function getExportTopPaddingHeight(resolution, scale) {
     return Math.round(topPadding * scale);
 }
 
-async function addCanvasTopPadding(sourceCanvas, paddingHeight, background) {
-    if (paddingHeight <= 0) return sourceCanvas;
+async function composeLongImageCanvas(sourceCanvas, background) {
+    if (!backgroundImageDataUrl) return sourceCanvas;
 
-    const paddedCanvas = document.createElement("canvas");
-    const ctx = paddedCanvas.getContext("2d");
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
 
-    paddedCanvas.width = sourceCanvas.width;
-    paddedCanvas.height = sourceCanvas.height + paddingHeight;
-    await drawFullSliceBackground(ctx, paddedCanvas.width, paddedCanvas.height, background);
-    ctx.drawImage(sourceCanvas, 0, paddingHeight);
+    canvas.width = sourceCanvas.width;
+    canvas.height = sourceCanvas.height;
+    await window.articleBackgroundRenderer.drawCanvasBackground(ctx, canvas.width, canvas.height, background);
+    ctx.drawImage(sourceCanvas, 0, 0);
 
-    return paddedCanvas;
+    return canvas;
 }
 
 function canvasToBlob(canvas, type = "image/jpeg", quality = 0.95) {
@@ -326,210 +332,6 @@ function canvasToBlob(canvas, type = "image/jpeg", quality = 0.95) {
             }
         }, type, quality);
     });
-}
-
-function isLikelyMobileBrowser() {
-    return isMobileViewport() || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-}
-
-function shouldOpenDesktopExportPreview(primaryButtonId) {
-    return !isLikelyMobileBrowser() && isVisibleElement(document.getElementById(primaryButtonId));
-}
-
-function openDesktopExportPreviewWindow(title = "导出预览") {
-    const previewWindow = window.open("", "_blank");
-    if (!previewWindow) return null;
-    previewWindow.opener = null;
-
-    previewWindow.document.open();
-    previewWindow.document.write(`<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1.0">
-    <title>${title}</title>
-    <style>
-        *{box-sizing:border-box}
-        body{margin:0;min-height:100vh;background:#f4f4f1;color:#1f1f1f;font-family:"Microsoft YaHei",Arial,sans-serif}
-        .exportPreviewShell{min-height:100vh;padding:24px 32px 104px}
-        .exportPreviewHeader{position:sticky;top:0;z-index:2;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;margin:-24px -32px 24px;padding:16px 32px;border-bottom:1px solid rgba(0,0,0,.08);background:rgba(244,244,241,.92);backdrop-filter:blur(12px)}
-        .exportPreviewTitle{font-size:16px;font-weight:700}
-        .exportPreviewTools{display:flex;align-items:center;justify-content:flex-end;gap:14px}
-        .exportPreviewMeta{font-size:13px;color:#666}
-        .exportPreviewPager{display:flex;align-items:center;gap:10px;padding:4px;border:1px solid rgba(0,0,0,.1);border-radius:6px;background:rgba(255,255,255,.72)}
-        .exportPreviewPager[hidden]{display:none}
-        .exportPreviewPagerBtn{min-width:72px;height:28px;border:0;border-radius:4px;background:transparent;color:#222;font-size:13px;cursor:pointer}
-        .exportPreviewPagerBtn:hover{background:rgba(0,0,0,.08)}
-        .exportPreviewPagerBtn:disabled{color:#aaa;cursor:not-allowed}
-        .exportPreviewPagerValue{min-width:72px;text-align:center;color:#333;font-size:13px;font-variant-numeric:tabular-nums}
-        .exportPreviewZoom{display:flex;align-items:center;gap:8px;padding:4px;border:1px solid rgba(0,0,0,.1);border-radius:6px;background:rgba(255,255,255,.72)}
-        .exportPreviewZoomBtn{width:28px;height:28px;border:0;border-radius:4px;background:transparent;color:#222;font-size:18px;line-height:1;cursor:pointer}
-        .exportPreviewZoomBtn:hover{background:rgba(0,0,0,.08)}
-        .exportPreviewZoomBtn:disabled{color:#aaa;cursor:not-allowed}
-        .exportPreviewZoomValue{min-width:44px;text-align:center;color:#333;font-size:13px;font-variant-numeric:tabular-nums}
-        .exportPreviewStage{display:flex;flex-direction:column;align-items:center;gap:22px}
-        .exportPreviewImage{display:block;width:min(100%,calc(720px * var(--export-preview-zoom,1)));height:auto;box-shadow:0 12px 40px rgba(0,0,0,.18);background:#fff}
-        .exportPreviewSlices{width:min(100%,calc(720px * var(--export-preview-zoom,1)));display:flex;flex-direction:column;gap:22px}
-        .exportPreviewSlice{display:none;width:100%;height:auto;box-shadow:0 12px 40px rgba(0,0,0,.18);background:#fff}
-        .exportPreviewSlice.active{display:block}
-        .exportPreviewLoading{min-height:45vh;display:flex;align-items:center;justify-content:center;color:#666;font-size:15px}
-        .exportPreviewDownload{position:fixed;right:28px;bottom:28px;z-index:5;border:0;border-radius:6px;padding:13px 18px;color:#fff;background:#1f1f1f;font-size:15px;font-weight:700;box-shadow:0 10px 28px rgba(0,0,0,.24);cursor:pointer}
-        .exportPreviewDownload:hover{background:#000}
-    </style>
-</head>
-<body>
-    <div class="exportPreviewShell">
-        <div class="exportPreviewHeader">
-            <div class="exportPreviewTitle">${title}</div>
-            <div class="exportPreviewPager" hidden aria-label="切图切换">
-                <button class="exportPreviewPagerBtn" type="button" data-preview-prev>上一张</button>
-                <span class="exportPreviewPagerValue" data-preview-page-value>1/1</span>
-                <button class="exportPreviewPagerBtn" type="button" data-preview-next>下一张</button>
-            </div>
-            <div class="exportPreviewTools">
-                <div class="exportPreviewMeta">正在生成预览...</div>
-                <div class="exportPreviewZoom" aria-label="预览缩放">
-                    <button class="exportPreviewZoomBtn" type="button" data-preview-zoom-out aria-label="缩小预览">-</button>
-                    <span class="exportPreviewZoomValue" data-preview-zoom-value>100%</span>
-                    <button class="exportPreviewZoomBtn" type="button" data-preview-zoom-in aria-label="放大预览">+</button>
-                </div>
-            </div>
-        </div>
-        <div class="exportPreviewLoading">正在生成预览...</div>
-    </div>
-</body>
-</html>`);
-    previewWindow.document.close();
-    return previewWindow;
-}
-
-function showDesktopExportPreview(previewWindow, { title, fileBlob, downloadFilename, downloadLabel, images }) {
-    if (!previewWindow || previewWindow.closed) {
-        downloadBlob(fileBlob, downloadFilename);
-        return;
-    }
-
-    const doc = previewWindow.document;
-    const objectUrls = [];
-    const downloadUrl = URL.createObjectURL(fileBlob);
-    objectUrls.push(downloadUrl);
-    const imageItems = images.map((image) => {
-        const url = URL.createObjectURL(image.blob);
-        objectUrls.push(url);
-        return { ...image, url };
-    });
-
-    const stageHtml = imageItems.length === 1
-        ? `<img class="exportPreviewImage" src="${imageItems[0].url}" alt="导出图片预览">`
-        : `<div class="exportPreviewSlices">${imageItems.map((image, index) => `<img class="exportPreviewSlice${index === 0 ? " active" : ""}" src="${image.url}" alt="第 ${index + 1} 张切图预览">`).join("")}</div>`;
-
-    doc.body.innerHTML = `
-        <div class="exportPreviewShell">
-            <div class="exportPreviewHeader">
-                <div class="exportPreviewTitle">${title}</div>
-                <div class="exportPreviewPager" ${imageItems.length > 1 ? "" : "hidden"} aria-label="切图切换">
-                    <button class="exportPreviewPagerBtn" type="button" data-preview-prev>上一张</button>
-                    <span class="exportPreviewPagerValue" data-preview-page-value>1/${imageItems.length}</span>
-                    <button class="exportPreviewPagerBtn" type="button" data-preview-next>下一张</button>
-                </div>
-                <div class="exportPreviewTools">
-                    <div class="exportPreviewMeta">${imageItems.length === 1 ? "1 张图片" : `${imageItems.length} 张切图`}</div>
-                    <div class="exportPreviewZoom" aria-label="预览缩放">
-                        <button class="exportPreviewZoomBtn" type="button" data-preview-zoom-out aria-label="缩小预览">-</button>
-                        <span class="exportPreviewZoomValue" data-preview-zoom-value>100%</span>
-                        <button class="exportPreviewZoomBtn" type="button" data-preview-zoom-in aria-label="放大预览">+</button>
-                    </div>
-                </div>
-            </div>
-            <div class="exportPreviewStage">${stageHtml}</div>
-            <button class="exportPreviewDownload" type="button">${downloadLabel}</button>
-        </div>`;
-
-    if (imageItems.length > 1) {
-        let currentImageIndex = 0;
-        const previousButton = doc.querySelector("[data-preview-prev]");
-        const nextButton = doc.querySelector("[data-preview-next]");
-        const pageValue = doc.querySelector("[data-preview-page-value]");
-        const sliceImages = Array.from(doc.querySelectorAll(".exportPreviewSlice"));
-        const updateCurrentPreviewImage = () => {
-            sliceImages.forEach((image, index) => {
-                image.classList.toggle("active", index === currentImageIndex);
-            });
-            pageValue.textContent = `${currentImageIndex + 1}/${imageItems.length}`;
-            previousButton.disabled = currentImageIndex <= 0;
-            nextButton.disabled = currentImageIndex >= imageItems.length - 1;
-            window.setTimeout(() => previewWindow.scrollTo({ top: 0, behavior: "smooth" }), 0);
-        };
-        previousButton.addEventListener("click", () => {
-            currentImageIndex = Math.max(0, currentImageIndex - 1);
-            updateCurrentPreviewImage();
-        });
-        nextButton.addEventListener("click", () => {
-            currentImageIndex = Math.min(imageItems.length - 1, currentImageIndex + 1);
-            updateCurrentPreviewImage();
-        });
-        updateCurrentPreviewImage();
-    }
-
-    let previewZoom = 1;
-    const minPreviewZoom = 0.1;
-    const maxPreviewZoom = 2;
-    const zoomStep = 0.1;
-    const zoomOutButton = doc.querySelector("[data-preview-zoom-out]");
-    const zoomInButton = doc.querySelector("[data-preview-zoom-in]");
-    const zoomValue = doc.querySelector("[data-preview-zoom-value]");
-    const updatePreviewZoom = () => {
-        const roundedZoom = Math.round(previewZoom * 10) / 10;
-        previewZoom = Math.min(maxPreviewZoom, Math.max(minPreviewZoom, roundedZoom));
-        doc.documentElement.style.setProperty("--export-preview-zoom", String(previewZoom));
-        zoomValue.textContent = `${Math.round(previewZoom * 100)}%`;
-        zoomOutButton.disabled = previewZoom <= minPreviewZoom;
-        zoomInButton.disabled = previewZoom >= maxPreviewZoom;
-    };
-    zoomOutButton.addEventListener("click", () => {
-        previewZoom -= zoomStep;
-        updatePreviewZoom();
-    });
-    zoomInButton.addEventListener("click", () => {
-        previewZoom += zoomStep;
-        updatePreviewZoom();
-    });
-    updatePreviewZoom();
-
-    const button = doc.querySelector(".exportPreviewDownload");
-    button.addEventListener("click", () => {
-        const link = doc.createElement("a");
-        link.href = downloadUrl;
-        link.download = downloadFilename;
-        link.rel = "noopener";
-        doc.body.appendChild(link);
-        link.click();
-        link.remove();
-    });
-
-    previewWindow.addEventListener("beforeunload", () => {
-        objectUrls.forEach((url) => URL.revokeObjectURL(url));
-    }, { once: true });
-}
-
-function downloadBlob(blob, filename, { fallbackWindow = null } = {}) {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    link.rel = "noopener";
-    link.style.display = "none";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    window.setTimeout(() => {
-        if (fallbackWindow && !fallbackWindow.closed) {
-            fallbackWindow.location.href = url;
-        }
-
-        window.setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
-    }, 250);
 }
 
 function getCanvasScale(sourceCanvas, poster = document.getElementById("poster")) {
@@ -741,7 +543,7 @@ function getProtectedDividerRanges(sourceCanvas, poster = document.getElementByI
     const padding = Math.max(2, Math.round(3 * scale));
 
     return getElementCanvasRanges(
-        (poster && poster.querySelectorAll(".paragraphDivider")) || [],
+        (poster && poster.querySelectorAll(".paragraphDivider, .cardTitleUnderline")) || [],
         sourceCanvas,
         padding,
         poster
@@ -1336,82 +1138,6 @@ function getSafeContentSliceHeight(sourceCanvas, sourceY, maxContentHeight, prot
     );
 }
 
-function loadBackgroundImageForCanvas() {
-    if (!backgroundImageDataUrl) return Promise.resolve(null);
-
-    if (backgroundImageCanvasCache.src === backgroundImageDataUrl && backgroundImageCanvasCache.promise) {
-        return backgroundImageCanvasCache.promise;
-    }
-
-    backgroundImageCanvasCache = {
-        src: backgroundImageDataUrl,
-        image: null,
-        promise: new Promise((resolve, reject) => {
-            const image = new Image();
-            image.onload = () => {
-                backgroundImageCanvasCache.image = image;
-                resolve(image);
-            };
-            image.onerror = () => reject(new Error("背景图片加载失败，已使用背景颜色兜底。"));
-            image.src = backgroundImageDataUrl;
-        })
-    };
-
-    return backgroundImageCanvasCache.promise;
-}
-
-function drawMirroredRepeatedImageAtNaturalSize(ctx, image, width, height) {
-    const sourceWidth = image.naturalWidth || image.width;
-    const sourceHeight = image.naturalHeight || image.height;
-    if (!sourceWidth || !sourceHeight || !width || !height) return;
-
-    // Mirror tiling softens seams while keeping the image at its natural size.
-    // backgroundImageBlendEdge is reserved for a later cross-fade edge blend.
-    const baseX = Math.round((width - sourceWidth) / 2);
-    const baseY = Math.round((height - sourceHeight) / 2);
-    const firstColumn = Math.floor((0 - baseX) / sourceWidth);
-    const lastColumn = Math.floor((width - 1 - baseX) / sourceWidth);
-    const firstRow = Math.floor((0 - baseY) / sourceHeight);
-    const lastRow = Math.floor((height - 1 - baseY) / sourceHeight);
-
-    for (let row = firstRow; row <= lastRow; row += 1) {
-        for (let column = firstColumn; column <= lastColumn; column += 1) {
-            const x = baseX + column * sourceWidth;
-            const y = baseY + row * sourceHeight;
-            const flipX = Math.abs(column) % 2 === 1;
-            const flipY = Math.abs(row) % 2 === 1;
-
-            ctx.save();
-            ctx.translate(flipX ? x + sourceWidth : x, flipY ? y + sourceHeight : y);
-            ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
-            ctx.drawImage(image, 0, 0, sourceWidth, sourceHeight);
-            ctx.restore();
-        }
-    }
-}
-
-async function drawFullSliceBackground(ctx, width, height, fallbackBackground = backgroundColor) {
-    ctx.fillStyle = fallbackBackground || backgroundColor;
-    ctx.fillRect(0, 0, width, height);
-
-    if (!backgroundImageDataUrl) return;
-
-    try {
-        const image = await loadBackgroundImageForCanvas();
-        if (image) {
-            const previousAlpha = ctx.globalAlpha;
-            try {
-                ctx.globalAlpha = previousAlpha * normalizeBackgroundImageOpacity(backgroundImageOpacity);
-                drawMirroredRepeatedImageAtNaturalSize(ctx, image, width, height);
-            } finally {
-                ctx.globalAlpha = previousAlpha;
-            }
-        }
-    } catch (error) {
-        console.warn(error);
-    }
-}
-
 const DESKTOP_SLICED_EXPORT_JPEG_QUALITY = 0.94;
 const MOBILE_SLICED_EXPORT_JPEG_QUALITY = 0.82;
 const DESKTOP_SLICED_CAPTURE_WINDOW_PIXEL_LIMIT = 60 * 1000 * 1000;
@@ -1419,7 +1145,7 @@ const MOBILE_SLICED_CAPTURE_WINDOW_PIXEL_LIMIT = 24 * 1000 * 1000;
 const SLICED_CAPTURE_MAX_WINDOW_SLICES = 40;
 
 function getSlicedCaptureWindowSlices(posterWidth, exportScale, contentSliceHeight) {
-    const pixelLimit = isLikelyMobileBrowser()
+    const pixelLimit = window.ArticleExportPreview.isLikelyMobileBrowser()
         ? MOBILE_SLICED_CAPTURE_WINDOW_PIXEL_LIMIT
         : DESKTOP_SLICED_CAPTURE_WINDOW_PIXEL_LIMIT;
     const captureWidth = Math.max(1, Math.round(posterWidth * exportScale));
@@ -1447,7 +1173,7 @@ async function addSliceToZip(zip, sourceCanvas, sourceY, sourceHeight, index, to
 
     sliceCanvas.width = sourceCanvas.width;
     sliceCanvas.height = sliceOutputHeight;
-    await drawFullSliceBackground(ctx, sliceCanvas.width, sliceCanvas.height);
+    await window.articleBackgroundRenderer.drawCanvasBackground(ctx, sliceCanvas.width, sliceCanvas.height);
     ctx.drawImage(
         sourceCanvas,
         0,
@@ -1492,13 +1218,9 @@ function setButtonBusy(button, busyText) {
     };
 }
 
-function isVisibleElement(element) {
-    return Boolean(element && element.offsetParent !== null);
-}
-
 function getActiveExportButton(primaryId, fallbackId) {
     const primaryButton = document.getElementById(primaryId);
-    if (isVisibleElement(primaryButton)) return primaryButton;
+    if (window.ArticleExportPreview.isVisibleElement(primaryButton)) return primaryButton;
 
     return document.getElementById(fallbackId);
 }
@@ -1633,7 +1355,7 @@ async function addWindowedSlicedPosterToZip(zip, phonePoster, resolution, export
     ].sort((a, b) => a.top - b.top);
     const initialWindowSlices = getSlicedCaptureWindowSlices(posterWidth, exportScale, contentSliceHeight);
 
-    let sourceY = 0;
+    let sourceY = Math.min(topPaddingHeight, sourceCanvasMetrics.height);
     let index = 1;
     let maxWindowSlices = Math.max(1, Math.floor(initialWindowSlices));
     let didShowOverlayBeforeCapture = false;
@@ -1762,7 +1484,9 @@ async function exportSlicedImagesZip() {
     const button = getActiveExportButton("previewExportSlicesBtn", "exportSlicesBtn");
     const restoreButton = setButtonBusy(button);
     const restoreOverlay = showExportOverlay("正在导出...");
-    const shouldPreview = shouldOpenDesktopExportPreview("previewExportSlicesBtn");
+    const shouldMobilePreview = window.ArticleExportPreview.isLikelyMobileBrowser();
+    const shouldDesktopPreview = window.ArticleExportPreview.shouldOpenDesktopExportPreview("previewExportSlicesBtn");
+    const shouldPreview = shouldMobilePreview || shouldDesktopPreview;
 
     try {
         await waitForNextPaint();
@@ -1779,7 +1503,7 @@ async function exportSlicedImagesZip() {
         }
 
         const zip = new JSZip();
-        const slicedJpegQuality = isLikelyMobileBrowser()
+        const slicedJpegQuality = window.ArticleExportPreview.isLikelyMobileBrowser()
             ? MOBILE_SLICED_EXPORT_JPEG_QUALITY
             : DESKTOP_SLICED_EXPORT_JPEG_QUALITY;
         const previewImages = shouldPreview ? [] : null;
@@ -1787,9 +1511,18 @@ async function exportSlicedImagesZip() {
 
         const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
         const filename = "年度总结-已切图jpg.zip";
-        if (shouldPreview) {
-            const previewWindow = openDesktopExportPreviewWindow("切图导出预览");
-            showDesktopExportPreview(previewWindow, {
+        if (shouldMobilePreview) {
+            window.ArticleExportPreview.showMobileExportPreview({
+                title: "切图导出预览",
+                fileBlob: zipBlob,
+                downloadFilename: filename,
+                downloadLabel: "下载 ZIP",
+                cssWidth: getPhoneExportCssWidth(resolution),
+                images: previewImages
+            });
+        } else if (shouldDesktopPreview) {
+            const previewWindow = window.ArticleExportPreview.openDesktopExportPreviewWindow("切图导出预览");
+            window.ArticleExportPreview.showDesktopExportPreview(previewWindow, {
                 title: "切图导出预览",
                 fileBlob: zipBlob,
                 downloadFilename: filename,
@@ -1797,7 +1530,7 @@ async function exportSlicedImagesZip() {
                 images: previewImages
             });
         } else {
-            downloadBlob(zipBlob, filename);
+            window.ArticleExportPreview.downloadBlob(zipBlob, filename);
         }
     } catch (error) {
         console.error("Sliced image export failed", error);

@@ -325,7 +325,7 @@
             const titleAlign = normalizeTextAlign(item.titleAlign);
             const titleColor = normalizeColorValue(item.titleColor) || getTextColor();
             const cardStyle = `--card-paragraph-spacing:${itemParagraphSpacing}px;--card-side-spacing:${itemSideSpacing}px`;
-            const titleHtml = `<div class="cardTitle" data-text-align="${titleAlign}" style="font-size:${item.titleSize * previewFontScale}px;font-family:${escapeHtml(resolveCardTitleFontFamily(item))};color:${escapeHtml(titleColor)};text-align:${titleAlign};">${titleText}</div>`;
+            const titleHtml = `<div class="cardTitle" data-text-align="${titleAlign}" style="font-size:${item.titleSize * previewFontScale}px;font-family:${escapeHtml(resolveCardTitleFontFamily(item))};color:${escapeHtml(titleColor)};text-align:${titleAlign};">${titleText}</div><div class="cardTitleUnderline" data-text-align="${titleAlign}" aria-hidden="true"></div>`;
 
             if (isImageCard(item)) {
                 const images = Array.isArray(item.images) ? item.images : (item.imageDataUrl ? [item] : []);
@@ -333,7 +333,7 @@
                     ? `<div class="cardImageList">${images.map((image) => `
                     <div class="cardImageWrap" data-image-align="${normalizeTextAlign(image.imageAlign || "center")}"><img class="cardImage" src="${escapeHtml(image.imageDataUrl)}" alt="${escapeHtml(image.imageName || item.title || "图片段落")}" style="width:${[50, 75, 100].includes(image.imageWidthPercent) ? image.imageWidthPercent : 100}%;object-fit:${escapeHtml(item.imageFit || "contain")};"></div>
                 `).join("")}</div>`
-                    : `<div class="cardImagePlaceholder">未上传图片</div>`;
+                    : "";
 
                 return `
         <div class="card imageCard" data-card-index="${index}" data-card-type="image" style="${cardStyle}">

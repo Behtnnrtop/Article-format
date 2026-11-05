@@ -3,6 +3,7 @@
 
     function createRichTextEditor(deps) {
         const richTextSelections = new Map();
+        const richTextSelectionOffsets = new Map();
 
         function getData() {
             return deps.getData();
@@ -14,6 +15,7 @@
 
         function clearSelections() {
             richTextSelections.clear();
+            richTextSelectionOffsets.clear();
         }
 
         function isRangeInsideElement(range, element) {
@@ -44,6 +46,7 @@
 
             if (editorEl.contains(selectionNode) || editorEl === selectionNode) {
                 richTextSelections.set(index, range.cloneRange());
+                richTextSelectionOffsets.set(index, getRichTextSelectionOffsets(editorEl));
             }
         }
 
@@ -57,6 +60,7 @@
             if (!isRangeInsideElement(range, editorEl)) return false;
 
             richTextSelections.set(index, range.cloneRange());
+            richTextSelectionOffsets.set(index, getRichTextSelectionOffsets(editorEl));
             return true;
         }
 
@@ -84,13 +88,20 @@
             if (index < 0 || !isRangeInsideElement(range, editorEl)) return false;
 
             richTextSelections.set(index, range.cloneRange());
+            richTextSelectionOffsets.set(index, getRichTextSelectionOffsets(editorEl));
             return true;
         }
 
         function restoreRichTextSelection(index) {
-            const range = richTextSelections.get(index);
             const selection = window.getSelection();
             const editorEl = getRichTextEditor(index);
+            const offsets = richTextSelectionOffsets.get(index);
+
+            if (editorEl && offsets && restoreRichTextSelectionOffsets(editorEl, offsets)) {
+                return true;
+            }
+
+            const range = richTextSelections.get(index);
 
             if (!range || !selection || !isRangeInsideElement(range, editorEl)) return false;
 
@@ -100,10 +111,21 @@
         }
 
         function getSavedRichTextRange(index) {
-            const range = richTextSelections.get(index);
             const editorEl = getRichTextEditor(index);
+            const offsets = richTextSelectionOffsets.get(index);
+
+            if (editorEl && offsets) {
+                return createRichTextRangeFromOffsets(editorEl, offsets);
+            }
+
+            const range = richTextSelections.get(index);
 
             return isRangeInsideElement(range, editorEl) ? range : null;
+        }
+
+        function getSavedRichTextSelectionOffsets(index) {
+            const offsets = richTextSelectionOffsets.get(index);
+            return offsets ? { ...offsets } : null;
         }
 
         function stripRichTextFontSpans(element) {
@@ -264,6 +286,46 @@
             return true;
         }
 
+        function clearRichTextColorFromBranch(branch) {
+            if (!branch || branch.nodeType !== Node.ELEMENT_NODE) return;
+
+            if (branch.tagName === "SPAN" && branch.style.color) {
+                branch.style.removeProperty("color");
+            }
+            Array.from(branch.querySelectorAll("span")).forEach((span) => {
+                if (span.style.color) {
+                    span.style.removeProperty("color");
+                }
+            });
+        }
+
+        function wrapRichTextColorRangeInRoot(root, range, color) {
+            if (!root || !range || range.collapsed || !color) return false;
+
+            const boundedRange = splitRichTextRangeBoundaries(range);
+            const textNodes = getRichTextRangeTextNodes(boundedRange, root);
+            if (!textNodes.length) return false;
+
+            textNodes.forEach((textNode) => {
+                let branch = textNode;
+                let parent = branch.parentNode;
+
+                while (parent && parent !== root && !isRichTextBlockElement(parent)) {
+                    splitElementAroundChild(parent, branch);
+                    branch = parent;
+                    parent = branch.parentNode;
+                }
+
+                clearRichTextColorFromBranch(branch);
+                const span = root.ownerDocument.createElement("span");
+                span.style.color = color;
+                branch.parentNode.insertBefore(span, branch);
+                span.appendChild(branch);
+            });
+
+            return true;
+        }
+
         function getRichTextSelectionOffsets(editorEl) {
             const selection = window.getSelection();
             if (!editorEl || !selection || selection.rangeCount === 0) return null;
@@ -370,7 +432,7 @@
             return total;
         }
 
-        function getRichTextPositionAtOffset(editorEl, offset) {
+        function getRichTextPositionAtOffset(editorEl, offset, affinity = "backward") {
             const targetOffset = Math.max(0, Number(offset) || 0);
             let currentOffset = 0;
             let fallback = {
@@ -396,7 +458,7 @@
                         offset: node.nodeValue.length
                     };
 
-                    if (targetOffset <= nextOffset) {
+                    if (targetOffset < nextOffset || (targetOffset === nextOffset && affinity !== "forward")) {
                         return {
                             node,
                             offset: Math.max(0, targetOffset - currentOffset)
@@ -411,7 +473,7 @@
                     const nextOffset = currentOffset + 1;
                     fallback = positionAfterNode(node);
 
-                    if (targetOffset <= nextOffset) {
+                    if (targetOffset < nextOffset || (targetOffset === nextOffset && affinity !== "forward")) {
                         return fallback;
                     }
 
@@ -434,7 +496,7 @@
                     const nextOffset = currentOffset + 1;
                     fallback = positionAfterNode(node);
 
-                    if (targetOffset <= nextOffset) {
+                    if (targetOffset < nextOffset || (targetOffset === nextOffset && affinity !== "forward")) {
                         return fallback;
                     }
 
@@ -445,7 +507,7 @@
                     const nextOffset = currentOffset + 1;
                     fallback = positionAfterNode(node);
 
-                    if (targetOffset <= nextOffset) {
+                    if (targetOffset < nextOffset || (targetOffset === nextOffset && affinity !== "forward")) {
                         return fallback;
                     }
 
@@ -458,30 +520,44 @@
             return walk(editorEl) || fallback;
         }
 
-        function restoreRichTextSelectionOffsets(editorEl, offsets) {
-            const selection = window.getSelection();
-            if (!editorEl || !selection || !offsets) return false;
+        function createRichTextRangeFromOffsets(editorEl, offsets) {
+            if (!editorEl || !offsets) return null;
 
-            const start = getRichTextPositionAtOffset(editorEl, offsets.start);
+            const start = getRichTextPositionAtOffset(
+                editorEl,
+                offsets.start,
+                offsets.collapsed ? "backward" : "forward"
+            );
             const end = offsets.collapsed
                 ? start
-                : getRichTextPositionAtOffset(editorEl, offsets.end);
+                : getRichTextPositionAtOffset(editorEl, offsets.end, "backward");
             const range = document.createRange();
 
             range.setStart(start.node, start.offset);
             range.setEnd(end.node, end.offset);
+            return range;
+        }
+
+        function restoreRichTextSelectionOffsets(editorEl, offsets) {
+            const selection = window.getSelection();
+            if (!editorEl || !selection || !offsets) return false;
+
+            const range = createRichTextRangeFromOffsets(editorEl, offsets);
+            if (!range) return false;
             selection.removeAllRanges();
             selection.addRange(range);
             return true;
         }
 
-        function finishRichTextEditorChange(index, editorEl, selectionOffsets = null) {
+        function finishRichTextEditorChange(index, editorEl, selectionOffsets = null, options = {}) {
             const data = getData();
             if (!editorEl || !data[index]) return;
 
             const nextSelectionOffsets = selectionOffsets || getRichTextSelectionOffsets(editorEl);
             data[index].text = deps.sanitizeRichText(editorEl.innerHTML);
-            editorEl.innerHTML = data[index].text;
+            if (options.rewriteEditor !== false) {
+                editorEl.innerHTML = data[index].text;
+            }
             restoreRichTextSelectionOffsets(editorEl, nextSelectionOffsets);
             saveRichTextSelection(index);
             deps.afterChange(index);
@@ -502,13 +578,10 @@
             const clone = editorEl.cloneNode(false);
             clone.innerHTML = data[index].text || editorEl.innerHTML;
 
-            const start = getRichTextPositionAtOffset(clone, offsets.start);
-            const end = getRichTextPositionAtOffset(clone, offsets.end);
-            const previewRange = clone.ownerDocument.createRange();
-            previewRange.setStart(start.node, start.offset);
-            previewRange.setEnd(end.node, end.offset);
+            const previewRange = createRichTextRangeFromOffsets(clone, offsets);
+            if (!previewRange) return "";
 
-            if (!wrapRichTextRangeInRoot(clone, previewRange, "color", selectedValue)) return "";
+            if (!wrapRichTextColorRangeInRoot(clone, previewRange, selectedValue)) return "";
 
             return deps.sanitizeRichText(clone.innerHTML);
         }
@@ -685,11 +758,11 @@
             if (!editorEl) return;
 
             saveCurrentRichTextSelectionIfInside(index);
+            const selectionOffsets = getSavedRichTextSelectionOffsets(index);
             editorEl.focus();
             restoreRichTextSelection(index);
-            const selectionOffsets = getRichTextSelectionOffsets(editorEl);
             if (toggleRichTextCommandRange(editorEl, command)) {
-                finishRichTextEditorChange(index, editorEl, selectionOffsets);
+                finishRichTextEditorChange(index, editorEl, selectionOffsets, { rewriteEditor: false });
             }
         }
 
@@ -734,9 +807,14 @@
 
             if (!isRangeInsideElement(range, editorEl)) return false;
 
+            const selectionOffsets = {
+                start: getRichTextBoundaryOffset(editorEl, range.startContainer, range.startOffset),
+                end: getRichTextBoundaryOffset(editorEl, range.endContainer, range.endOffset),
+                collapsed: false
+            };
             editorEl.focus();
-            wrapRichTextRangeTextNodes(range, editorEl, "color", selectedValue);
-            finishRichTextEditorChange(index, editorEl);
+            if (!wrapRichTextColorRangeInRoot(editorEl, range, selectedValue)) return false;
+            finishRichTextEditorChange(index, editorEl, selectionOffsets);
             return true;
         }
 
@@ -882,6 +960,7 @@
             saveCurrentRichTextSelection,
             restoreRichTextSelection,
             getSavedRichTextRange,
+            getSavedRichTextSelectionOffsets,
             stripRichTextFontSpans,
             clearRichTextColorStyles,
             unwrapRichTextSpanIfEmpty,

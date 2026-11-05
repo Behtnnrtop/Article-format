@@ -106,7 +106,6 @@ let pendingTypesettingOverlayTimer = null;
 let pendingTypesettingOverlayHideTimer = null;
 let typesettingOverlayShownAt = 0;
 let posterTypesettingOverlay = null;
-let posterBackgroundSyncFrame = null;
 let pendingStateSaveTimer = null;
 let lastSavedStateJson = "";
 let stateSaveErrorShown = false;
@@ -261,6 +260,10 @@ function splitTypesetDecorationStyle(style = {}) {
         }
     });
 
+    if (decorationStyle.textDecorationLine || decorationStyle.textDecoration) {
+        decorationStyle.textDecorationColor = tokenStyle.color || "currentColor";
+    }
+
     return {
         tokenStyle,
         decorationStyle
@@ -388,6 +391,8 @@ function measureTypesetTokens(tokens, root) {
     if (!tokens.length) return 0;
 
     const layer = getTypesetMeasureLayer();
+    const languageRoot = root && typeof root.closest === "function" ? root.closest("[lang]") : null;
+    layer.setAttribute("lang", (languageRoot && languageRoot.getAttribute("lang")) || getPosterLanguage());
     const line = createTypesetLineElement(tokens);
     copyTypesetTextStyles(root, line);
     layer.innerHTML = "";
@@ -636,7 +641,7 @@ async function flushMobileTypesettingIfNeeded({ force = false, showBusy = true }
     applyPosterTypesetting();
     syncCardsOffset();
     schedulePhonePreviewSync();
-    schedulePosterBackgroundSync(document.getElementById("poster"));
+    window.articleBackgroundRenderer.schedulePosterBackgroundSync(document.getElementById("poster"));
     markMobilePreviewTypesetReady();
     clearMobileTypesettingDirty();
     clearMobileTypesettingBusy();
@@ -719,7 +724,7 @@ function runDeferredCardTypesetting(index) {
     applyCardTypesetting(card);
     syncCardsOffset();
     schedulePhonePreviewSync();
-    schedulePosterBackgroundSync(document.getElementById("poster"));
+    window.articleBackgroundRenderer.schedulePosterBackgroundSync(document.getElementById("poster"));
 }
 
 function scheduleDeferredCardTypesetting(index) {
@@ -872,7 +877,7 @@ async function runPosterTypesettingCompletion({ shouldSave = true, hideOverlay =
     syncPreviewExportActionsPosition();
     schedulePhonePreviewSync();
 
-    await syncPosterBackgroundCanvas(document.getElementById("poster"));
+    await window.articleBackgroundRenderer.syncPosterBackgroundCanvas(document.getElementById("poster"));
 
     if (hideOverlay) {
         hideTypesettingOverlay();
@@ -999,8 +1004,8 @@ function syncHeadlineTextWidths(poster = document.getElementById("poster")) {
     const paddingLeft = parseFloat(posterStyle.paddingLeft || "0");
     const paddingRight = parseFloat(posterStyle.paddingRight || "0");
     const contentWidth = Math.max(1, poster.clientWidth - paddingLeft - paddingRight);
-    let leftLimit = showSideHeader ? sideSpacing : 0;
-    let rightLimit = showSideHeader ? contentWidth - sideSpacing : contentWidth;
+    const leftLimit = sideSpacing;
+    let rightLimit = contentWidth - sideSpacing;
 
     if (showSideHeader && side && window.getComputedStyle(side).display !== "none") {
         const posterRect = poster.getBoundingClientRect();
@@ -1652,6 +1657,7 @@ function getPhoneRenderSignature() {
     const resolution = phoneResolutions[phoneResolution] || phoneResolutions["1080x2376"];
 
     return JSON.stringify({
+        posterLanguage: getPosterLanguage(),
         globalFont,
         data,
         backgroundColor,
@@ -1886,6 +1892,8 @@ function getElementTextBounds(element) {
 
 const ROTATED_VERTICAL_MARKS = new Set(Array.from("【】（）()《》〈〉「」『』[]［］{}｛｝〔〕：/；:;"));
 const VERTICAL_BRACKET_EDGE_OFFSET_EM = 0.18;
+const EXPORT_ROTATED_DIGIT_AND_BRACKET_OFFSET_X_EM = 0.06;
+const EXPORT_ROTATED_DIGIT_AND_BRACKET_OFFSET_Y_EM = 0.07;
 const VERTICAL_PARENTHESIS_ADJUSTMENTS = {
     "【": { xEm: 0, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
     "（": { xEm: 0.1, yEm: -VERTICAL_BRACKET_EDGE_OFFSET_EM },
@@ -1913,10 +1921,21 @@ const VERTICAL_PARENTHESIS_ADJUSTMENTS = {
     "〕": { xEm: 0, yEm: VERTICAL_BRACKET_EDGE_OFFSET_EM }
 };
 
+function getExportRotatedCharacterOffset(char) {
+    return /^[0-9]$/.test(char) || Object.prototype.hasOwnProperty.call(VERTICAL_PARENTHESIS_ADJUSTMENTS, char)
+        ? {
+            xEm: EXPORT_ROTATED_DIGIT_AND_BRACKET_OFFSET_X_EM,
+            yEm: EXPORT_ROTATED_DIGIT_AND_BRACKET_OFFSET_Y_EM
+        }
+        : { xEm: 0, yEm: 0 };
+}
+
 const VERTICAL_TEXT_TARGETS = {
     side: {
         elementId: "side",
         inputId: "sideInput",
+        inkAwareSpacing: true,
+        preserveRenderedExportDom: true,
         isPreviewActive: () => true,
         isExportActive: (poster) => !poster.classList.contains("hideSideHeader")
     },
@@ -1933,11 +1952,170 @@ function shouldRotateVerticalChar(char) {
     return ROTATED_VERTICAL_MARKS.has(char) || /^[A-Za-z0-9!-~]$/.test(char);
 }
 
+const VERTICAL_ROTATED_CHAR_BASE_OFFSET_EM = 0.16;
+const VERTICAL_ROTATED_CHAR_MAX_OFFSET_EM = 0.26;
+const verticalRotationOffsetCache = new Map();
+
+function getVerticalRotationOffsetEm(char, fontMetrics = null) {
+    if (!fontMetrics || !fontMetrics.fontSize || !fontMetrics.fontFamily) {
+        return VERTICAL_ROTATED_CHAR_BASE_OFFSET_EM;
+    }
+
+    const cacheKey = [
+        char,
+        fontMetrics.fontFamily,
+        fontMetrics.fontSize,
+        fontMetrics.fontWeight || "normal",
+        fontMetrics.fontStyle || "normal"
+    ].join("|");
+    if (verticalRotationOffsetCache.has(cacheKey)) {
+        return verticalRotationOffsetCache.get(cacheKey);
+    }
+
+    let offsetEm = VERTICAL_ROTATED_CHAR_BASE_OFFSET_EM;
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (context) {
+        const fontSize = Math.max(1, Number(fontMetrics.fontSize));
+        context.font = `${fontMetrics.fontStyle || "normal"} ${fontMetrics.fontWeight || "normal"} ${fontSize}px ${fontMetrics.fontFamily}`;
+        const measurement = context.measureText(char);
+        const ascent = Number(measurement.actualBoundingBoxAscent);
+        const descent = Number(measurement.actualBoundingBoxDescent);
+        if (Number.isFinite(ascent) && Number.isFinite(descent)) {
+            const inkHeightRatio = Math.max(0, Math.min(1, (ascent + descent) / fontSize));
+            const shortGlyphAdjustment = Math.max(0, 0.78 - inkHeightRatio) * 0.5;
+            offsetEm = Math.min(
+                VERTICAL_ROTATED_CHAR_MAX_OFFSET_EM,
+                VERTICAL_ROTATED_CHAR_BASE_OFFSET_EM + shortGlyphAdjustment
+            );
+        }
+    }
+
+    const roundedOffsetEm = Math.round(offsetEm * 1000) / 1000;
+    verticalRotationOffsetCache.set(cacheKey, roundedOffsetEm);
+    return roundedOffsetEm;
+}
+
+function getVerticalRotationAdjustment(char, fontMetrics = null) {
+    return /^[A-Za-z]$/.test(char)
+        ? { xEm: getVerticalRotationOffsetEm(char, fontMetrics) }
+        : null;
+}
+
+const verticalGlyphInkBoundsCache = new Map();
+
+function getVerticalGlyphInkBounds(charInfo, fontMetrics = null) {
+    const fontSize = Math.max(1, Number(fontMetrics && fontMetrics.fontSize));
+    const fontFamily = fontMetrics && fontMetrics.fontFamily;
+    if (!Number.isFinite(fontSize) || !fontFamily) return null;
+
+    const cacheKey = [
+        charInfo.char,
+        charInfo.rotate ? "rotated" : "upright",
+        fontFamily,
+        fontSize,
+        fontMetrics.fontWeight || "normal",
+        fontMetrics.fontStyle || "normal"
+    ].join("|");
+    if (verticalGlyphInkBoundsCache.has(cacheKey)) {
+        return verticalGlyphInkBoundsCache.get(cacheKey);
+    }
+
+    const context = getTypesetMeasureCanvasContext();
+    if (!context) return null;
+
+    context.font = getTypesetCanvasFont({
+        fontStyle: fontMetrics.fontStyle || "normal",
+        fontWeight: fontMetrics.fontWeight || "normal",
+        fontSize: `${fontSize}px`,
+        fontFamily
+    });
+    const measurement = context.measureText(charInfo.char);
+    let top = null;
+    let bottom = null;
+
+    if (charInfo.rotate) {
+        const advanceWidth = Number(measurement.width);
+        const inkLeft = Number(measurement.actualBoundingBoxLeft);
+        const inkRight = Number(measurement.actualBoundingBoxRight);
+        if (Number.isFinite(advanceWidth) && Number.isFinite(inkLeft) && Number.isFinite(inkRight) && inkLeft + inkRight > 0) {
+            const textStart = (fontSize - advanceWidth) / 2;
+            top = textStart - inkLeft;
+            bottom = textStart + inkRight;
+        }
+    } else {
+        const actualAscent = Number(measurement.actualBoundingBoxAscent);
+        const actualDescent = Number(measurement.actualBoundingBoxDescent);
+        if (Number.isFinite(actualAscent) && Number.isFinite(actualDescent) && actualAscent + actualDescent > 0) {
+            const fontAscent = Number(measurement.fontBoundingBoxAscent);
+            const fontDescent = Number(measurement.fontBoundingBoxDescent);
+            if (Number.isFinite(fontAscent) && Number.isFinite(fontDescent) && fontAscent + fontDescent > 0) {
+                const leading = (fontSize - fontAscent - fontDescent) / 2;
+                const baseline = leading + fontAscent;
+                top = baseline - actualAscent;
+                bottom = baseline + actualDescent;
+            } else {
+                const inkHeight = actualAscent + actualDescent;
+                top = (fontSize - inkHeight) / 2;
+                bottom = top + inkHeight;
+            }
+        }
+    }
+
+    if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= top) {
+        verticalGlyphInkBoundsCache.set(cacheKey, null);
+        return null;
+    }
+
+    const parenthesisYOffset = charInfo.parenthesisAdjustment
+        ? charInfo.parenthesisAdjustment.yEm * fontSize
+        : 0;
+    const bounds = {
+        top: top + parenthesisYOffset,
+        bottom: bottom + parenthesisYOffset
+    };
+    verticalGlyphInkBoundsCache.set(cacheKey, bounds);
+    return bounds;
+}
+
+function applyVerticalColumnSpacing(column, fontMetrics = null, inkAwareSpacing = false) {
+    const fontSize = Math.max(1, Number(fontMetrics && fontMetrics.fontSize) || 1);
+    const letterSpacing = Math.max(0, Number(fontMetrics && fontMetrics.letterSpacing) || 0);
+    const fixedAdvance = fontSize + letterSpacing;
+    const chars = column.chars;
+
+    const inkBounds = inkAwareSpacing
+        ? chars.map((charInfo) => getVerticalGlyphInkBounds(charInfo, fontMetrics))
+        : [];
+    const canUseInkSpacing = inkAwareSpacing && inkBounds.length === chars.length && inkBounds.every(Boolean);
+
+    chars.forEach((charInfo, index) => {
+        charInfo.topOffsetPx = index * fixedAdvance;
+        charInfo.inkBounds = canUseInkSpacing ? inkBounds[index] : null;
+    });
+
+    if (canUseInkSpacing) {
+        for (let index = 1; index < chars.length; index += 1) {
+            const previous = chars[index - 1];
+            const previousBounds = inkBounds[index - 1];
+            const currentBounds = inkBounds[index];
+            chars[index].topOffsetPx = previous.topOffsetPx
+                + previousBounds.bottom
+                + letterSpacing
+                - currentBounds.top;
+        }
+    }
+
+    const lastChar = chars[chars.length - 1];
+    column.inkAwareSpacing = canUseInkSpacing;
+    column.heightPx = Math.max(fontSize, (lastChar ? lastChar.topOffsetPx : 0) + fontSize);
+}
+
 function getVerticalParenthesisAdjustment(char) {
     return VERTICAL_PARENTHESIS_ADJUSTMENTS[char] || null;
 }
 
-function createVerticalTextLayout(value) {
+function createVerticalTextLayout(value, fontMetrics = null, { inkAwareSpacing = false } = {}) {
     const columns = String(value == null ? "" : value)
         .split("\n")
         .map((line) => {
@@ -1947,16 +2125,20 @@ function createVerticalTextLayout(value) {
                 return {
                     char,
                     rotate: shouldRotateVerticalChar(char),
+                    rotationAdjustment: getVerticalRotationAdjustment(char, fontMetrics),
                     parenthesisAdjustment
                 };
             });
 
-            return { chars };
+            const column = { chars };
+            applyVerticalColumnSpacing(column, fontMetrics, inkAwareSpacing);
+            return column;
         });
 
     return {
         columns,
-        maxRows: Math.max(1, ...columns.map((column) => column.chars.length))
+        maxRows: Math.max(1, ...columns.map((column) => column.chars.length)),
+        maxHeightPx: Math.max(1, ...columns.map((column) => column.heightPx || 1))
     };
 }
 
@@ -1967,6 +2149,10 @@ function createVerticalTextCharElement(doc, charInfo, className = "verticalTextC
     if (charInfo.rotate) {
         classes.push("rotateVerticalChar");
     }
+    if (charInfo.rotationAdjustment) {
+        classes.push("adjustVerticalRotatedChar");
+        span.style.setProperty("--vertical-rotated-char-offset-x", `${charInfo.rotationAdjustment.xEm}em`);
+    }
     if (charInfo.parenthesisAdjustment) {
         classes.push("adjustVerticalParenthesisChar");
         span.style.setProperty("--vertical-parenthesis-offset-x", `${charInfo.parenthesisAdjustment.xEm}em`);
@@ -1976,10 +2162,17 @@ function createVerticalTextCharElement(doc, charInfo, className = "verticalTextC
     return span;
 }
 
-function renderVerticalTextFlow(element, value, doc = document) {
+function renderVerticalTextFlow(element, value, doc = document, { inkAwareSpacing = false } = {}) {
     if (!element) return;
 
-    const layout = createVerticalTextLayout(value);
+    const style = window.getComputedStyle(element);
+    const layout = createVerticalTextLayout(value, {
+        fontFamily: style.fontFamily,
+        fontSize: parseFloat(style.fontSize || "0"),
+        fontWeight: style.fontWeight,
+        fontStyle: style.fontStyle,
+        letterSpacing: parseFloat(style.letterSpacing || "0") || 0
+    }, { inkAwareSpacing });
     element.classList.remove("typesetText");
     element.innerHTML = "";
 
@@ -1987,8 +2180,23 @@ function renderVerticalTextFlow(element, value, doc = document) {
         const line = doc.createElement("span");
         line.className = "verticalTextLine";
 
+        if (column.inkAwareSpacing) {
+            line.classList.add("inkAwareVerticalTextLine");
+            line.style.setProperty("--vertical-line-height", `${column.heightPx}px`);
+        }
+
         column.chars.forEach((charInfo) => {
-            line.appendChild(createVerticalTextCharElement(doc, charInfo));
+            const charElement = createVerticalTextCharElement(doc, charInfo);
+            if (!column.inkAwareSpacing) {
+                line.appendChild(charElement);
+                return;
+            }
+
+            const slot = doc.createElement("span");
+            slot.className = "verticalTextCharSlot";
+            slot.style.setProperty("--vertical-char-top", `${charInfo.topOffsetPx}px`);
+            slot.appendChild(charElement);
+            line.appendChild(slot);
         });
 
         element.appendChild(line);
@@ -2025,7 +2233,9 @@ function renderVerticalTextTarget(target, value = null, poster = document.getEle
         return;
     }
 
-    renderVerticalTextFlow(element, text);
+    renderVerticalTextFlow(element, text, document, {
+        inkAwareSpacing: config.inkAwareSpacing === true
+    });
 }
 
 function applyVerticalTextExportContainerStyles(clone, metrics) {
@@ -2046,7 +2256,10 @@ function applyVerticalTextExportContainerStyles(clone, metrics) {
 
 function applyVerticalTextExportCharStyles(span, charInfo, metrics, columnIndex, rowIndex, topOffset) {
     const centerX = metrics.width - metrics.fontSize / 2 - columnIndex * metrics.columnAdvance;
-    const centerY = topOffset + metrics.fontSize / 2 + rowIndex * metrics.charAdvance;
+    const rowTop = Number.isFinite(charInfo.topOffsetPx)
+        ? charInfo.topOffsetPx
+        : rowIndex * metrics.charAdvance;
+    const centerY = topOffset + metrics.fontSize / 2 + rowTop;
 
     span.removeAttribute("class");
     span.style.position = "absolute";
@@ -2076,6 +2289,10 @@ function applyVerticalTextExportCharStyles(span, charInfo, metrics, columnIndex,
     }
 
     if (charInfo.rotate) {
+        const rotationOffsetX = charInfo.rotationAdjustment
+            ? charInfo.rotationAdjustment.xEm * metrics.fontSize
+            : 0;
+        span.style.left = `${centerX - metrics.fontSize / 2 + rotationOffsetX}px`;
         span.style.transform = "rotate(90deg)";
     }
 }
@@ -2095,6 +2312,7 @@ function getVerticalTextExportMetrics(source, clone, clonedDoc) {
         fontFamily: sourceStyle.fontFamily,
         fontWeight: sourceStyle.fontWeight,
         fontStyle: sourceStyle.fontStyle,
+        letterSpacing,
         color: sourceStyle.color || textColor,
         width: Math.max(sourceRect.width, fontSize),
         height: Math.max(sourceRect.height, fontSize),
@@ -2103,17 +2321,58 @@ function getVerticalTextExportMetrics(source, clone, clonedDoc) {
     };
 }
 
-function renderVerticalTextAbsolute(clone, value, metrics, clonedDoc) {
-    const layout = createVerticalTextLayout(value);
+function renderVerticalTextAbsolute(clone, value, metrics, clonedDoc, { inkAwareSpacing = false } = {}) {
+    const layout = createVerticalTextLayout(value, metrics, { inkAwareSpacing });
     applyVerticalTextExportContainerStyles(clone, metrics);
 
     layout.columns.forEach((column, columnIndex) => {
-        const topOffset = Math.max(layout.maxRows - column.chars.length, 0) * metrics.charAdvance;
+        const topOffset = Math.max(layout.maxHeightPx - column.heightPx, 0);
 
         column.chars.forEach((charInfo, rowIndex) => {
             const span = createVerticalTextCharElement(clonedDoc, charInfo);
             applyVerticalTextExportCharStyles(span, charInfo, metrics, columnIndex, rowIndex, topOffset);
             clone.appendChild(span);
+        });
+    });
+}
+
+function stabilizePreservedVerticalTextForExport(source, clone) {
+    if (!source || !clone) return;
+
+    const sourceLines = Array.from(source.querySelectorAll(".verticalTextLine"));
+    const clonedLines = Array.from(clone.querySelectorAll(".verticalTextLine"));
+
+    sourceLines.forEach((sourceLine, lineIndex) => {
+        const clonedLine = clonedLines[lineIndex];
+        if (!clonedLine) return;
+
+        const sourceSlots = Array.from(sourceLine.querySelectorAll(".verticalTextCharSlot"));
+        const clonedSlots = Array.from(clonedLine.querySelectorAll(".verticalTextCharSlot"));
+
+        sourceSlots.forEach((sourceSlot, slotIndex) => {
+            const clonedSlot = clonedSlots[slotIndex];
+            const sourceChar = sourceSlot.querySelector(".rotateVerticalChar");
+            const clonedChar = clonedSlot && clonedSlot.querySelector(".rotateVerticalChar");
+            if (!clonedSlot || !sourceChar || !clonedChar) return;
+
+            const sourceCharStyle = window.getComputedStyle(sourceChar);
+            const leftOffset = parseFloat(sourceCharStyle.left || "0");
+            const topOffset = parseFloat(sourceCharStyle.top || "0");
+            const fontSize = parseFloat(sourceCharStyle.fontSize || "0");
+            const exportOffset = getExportRotatedCharacterOffset(sourceChar.textContent || "");
+            const resolvedFontSize = Number.isFinite(fontSize) ? fontSize : 0;
+            const exportOffsetX = exportOffset.xEm * resolvedFontSize;
+            const exportOffsetY = exportOffset.yEm * resolvedFontSize;
+
+            clonedSlot.classList.add("exportStableVerticalTextCharSlot");
+            clonedSlot.style.removeProperty("transform");
+            clonedSlot.style.removeProperty("transform-origin");
+
+            clonedChar.style.position = "absolute";
+            clonedChar.style.left = `${(Number.isFinite(leftOffset) ? leftOffset : 0) + exportOffsetX}px`;
+            clonedChar.style.top = `${(Number.isFinite(topOffset) ? topOffset : 0) + exportOffsetY}px`;
+            clonedChar.style.transform = "rotate(90deg)";
+            clonedChar.style.transformOrigin = "center center";
         });
     });
 }
@@ -2127,6 +2386,11 @@ function renderVerticalTextCloneElement(sourcePoster, clonedPoster, clonedDoc, t
     const clone = getPosterPart(clonedPoster, part);
     if (!source || !clone || window.getComputedStyle(source).display === "none") return;
 
+    if (config.preserveRenderedExportDom === true) {
+        stabilizePreservedVerticalTextForExport(source, clone);
+        return;
+    }
+
     const text = getVerticalTextTargetValue(config, source);
     if (!text.trim()) return;
 
@@ -2134,7 +2398,8 @@ function renderVerticalTextCloneElement(sourcePoster, clonedPoster, clonedDoc, t
         clone,
         text,
         getVerticalTextExportMetrics(source, clone, clonedDoc),
-        clonedDoc
+        clonedDoc,
+        { inkAwareSpacing: config.inkAwareSpacing === true }
     );
 }
 
